@@ -22,6 +22,7 @@ import argparse
 import base64
 import io
 import json
+import os
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -509,12 +510,22 @@ class Handler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    # Cloud hosts (Render/Railway/Fly/Heroku-likes) inject $PORT and expect the
+    # process to bind 0.0.0.0. Use those as defaults when present; locally fall
+    # back to 127.0.0.1:8000. CLI flags still override everything.
+    env_port = os.environ.get("PORT")
+    default_port = int(env_port) if env_port else 8000
+    default_host = "0.0.0.0" if env_port else "127.0.0.1"
+    is_cloud = bool(env_port)
+
     parser = argparse.ArgumentParser(
         prog="xrd_webgui",
         description="Local browser GUI for the XRD Graphitization Analyzer.",
     )
-    parser.add_argument("--port", type=int, default=8000, help="Port (default 8000).")
-    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
+    parser.add_argument("--port", type=int, default=default_port,
+                        help=f"Port (default {default_port}; honours $PORT).")
+    parser.add_argument("--host", default=default_host,
+                        help=f"Bind host (default {default_host}).")
     parser.add_argument("--no-browser", action="store_true",
                         help="Do not auto-open the default web browser.")
     args = parser.parse_args()
@@ -522,10 +533,11 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
 
-    print(f"XRD Graphitization Analyzer — serving at {url}")
-    print("Press Ctrl+C to stop.")
+    print(f"XRD Graphitization Analyzer — serving at {url}", flush=True)
+    print("Press Ctrl+C to stop.", flush=True)
 
-    if not args.no_browser:
+    # Don't try to open a browser on a headless cloud host.
+    if not args.no_browser and not is_cloud:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
 
     try:

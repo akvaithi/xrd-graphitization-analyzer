@@ -45,6 +45,21 @@ python3 xrd_webgui.py --port 8642
 Choose one or more `.xy` files (optionally a `.brml`), pick a model, and click
 **Analyze**. With multiple files, page between per-file results using the pager.
 
+The server honours `$PORT`/`$HOST` (binding `0.0.0.0` when `$PORT` is set), so
+it runs unchanged on container hosts.
+
+## Deploy (Render)
+
+This repo includes a `render.yaml` blueprint and a `Procfile`.
+
+1. Push to GitHub (already done for the canonical repo).
+2. On [render.com](https://render.com): **New → Blueprint**, connect this
+   repository, and **Apply**. Render reads `render.yaml`, runs
+   `pip install -r requirements.txt`, and starts `python3 xrd_webgui.py`.
+3. Open the assigned `*.onrender.com` URL.
+
+The same `Procfile` works on Railway/Heroku-style hosts.
+
 ## Pipeline
 
 1. Parse `.xy` (2θ, intensity); window to 22°–30° 2θ.
