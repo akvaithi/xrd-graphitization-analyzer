@@ -1,39 +1,46 @@
 # XRD Degree of Graphitization Analyzer
 
-Parses X-ray Diffraction `.xy` files and calculates the **Degree of
-Graphitization (DG%)** of carbon materials using the NETL standard: a bimodal
-Pseudo-Voigt deconvolution of the carbon (002) peak followed by the Maire–Mering
-equation.
+Object-oriented tool that parses X-ray Diffraction `.xy` files of synthetic
+graphite and computes the **Degree of Graphitization (DG%)** of the carbon (002)
+reflection. Two selectable calculation methods, a CLI (single-file + batch), and
+a local/zero-Tk web GUI that computes both methods at once.
 
-## Features
+## Calculation methods (`--method`)
 
-- **Two fitting models**
-  - `legacy` — Kα1/Kα2 *doublet* Pseudo-Voigt (height-parametrised; analytic Kα2
-    shadow positioned via Bragg's Law).
-  - `origin` — OriginLab **PsdVoigt2** (area-normalised, shared FWHM, shared `y0`
-    baseline; no Kα2), faithful to NETL's Origin procedure.
-- **Bruker `.brml` support** — reads `WaveLengthAlpha1/Alpha2` and
-  `WaveLengthRatio` from `MeasurementContainer.xml` (defaults: 1.5406, 1.54439,
-  0.5).
-- **CLI** with single-file and **batch** processing (directories / globs), plus
-  `--json` and `--csv` output.
-- **Local web GUI** with multi-file upload, paginated per-file results, and an
-  embedded fit plot.
+- **Method A — NETL paper standard**
+  Bimodal Pseudo-Voigt deconvolution (graphitic + turbostratic), Bragg
+  d-spacings, area fractions, weighted `d′`, and the Maire–Mering equation.
+
+- **Method B — OriginLab PsdVoigt1 (XRD ppt) + NETL**
+  1. Linear baseline subtraction over **24°–27.5°**.
+  2. Fits the exact OriginLab **PsdVoigt1** line shape with strict bounds
+     (`μ ∈ [0,1]`; turbostratic `xc ∈ [25.1, 26.3]`; graphitic `xc ∈ [26.3, 26.8]`).
+  3. Runs **both** a single-peak (legacy) and dual-peak (NETL) fit and reports the
+     legacy **DG% overestimation**.
+  4. Crystallite stacking height **Lc = 0.89·λ / (B·cos(θ/2))** from the
+     graphitic FWHM.
+
+X-ray wavelength is configurable; default **λ = 1.54187 Å** (NETL standard).
+`OptimizeWarning` / fit failures (e.g. high amorphous content) are caught and
+reported cleanly.
 
 Dependencies: `numpy`, `scipy`, `matplotlib`.
 
 ## CLI
 
 ```bash
-# Single file
-python3 xrd_analyzer.py sample.xy
-python3 xrd_analyzer.py sample.xy --json
-python3 xrd_analyzer.py sample.xy --model origin --brml sample.brml
+python3 xrd_analyzer.py sample.xy --method A
+python3 xrd_analyzer.py sample.xy --method B --json
+python3 xrd_analyzer.py sample.xy --wavelength 1.5406
 
 # Batch (multiple files / a directory) → table, JSON array, or CSV
-python3 xrd_analyzer.py *.xy --csv results.csv
-python3 xrd_analyzer.py data_dir/ --model origin --json
+python3 xrd_analyzer.py *.xy --method B --csv results.csv
+python3 xrd_analyzer.py data_dir/ --method A --json
 ```
+
+`--json` emits a strict JSON object (one file) or array (batch) containing the
+methodology, calculations, and fitted parameters (`mu`, `w`, `xc`, `A`), and
+suppresses all other output.
 
 ## Web GUI
 
@@ -42,28 +49,21 @@ python3 xrd_webgui.py            # serves http://127.0.0.1:8000
 python3 xrd_webgui.py --port 8642
 ```
 
-Choose one or more `.xy` files (optionally a `.brml`), pick a model, and click
-**Analyze**. With multiple files, page between per-file results using the pager.
-
-The server honours `$PORT`/`$HOST` (binding `0.0.0.0` when `$PORT` is set), so
-it runs unchanged on container hosts.
+Choose one or more `.xy` files, set the wavelength, and click **Analyze**. **Both
+methods are computed**; the dropdown switches which method's results + plot are
+shown, and multiple files are paged. The server honours `$PORT`/`$HOST` (binds
+`0.0.0.0` when `$PORT` is set), so it runs unchanged on container hosts.
 
 ## Deploy (Render)
 
-This repo includes a `render.yaml` blueprint and a `Procfile`.
-
-1. Push to GitHub (already done for the canonical repo).
-2. On [render.com](https://render.com): **New → Blueprint**, connect this
-   repository, and **Apply**. Render reads `render.yaml`, runs
-   `pip install -r requirements.txt`, and starts `python3 xrd_webgui.py`.
-3. Open the assigned `*.onrender.com` URL.
-
-The same `Procfile` works on Railway/Heroku-style hosts.
+Includes a `render.yaml` blueprint and a `Procfile`. On a connected repo, Render
+auto-deploys on each push (`pip install -r requirements.txt`, then
+`python3 xrd_webgui.py`). The same `Procfile` works on Railway/Heroku-style hosts.
 
 ## Pipeline
 
-1. Parse `.xy` (2θ, intensity); window to 22°–30° 2θ.
-2. Fit a bimodal Pseudo-Voigt (chosen model) with `scipy.optimize.curve_fit`.
-3. Bragg d-spacing per phase: `d = λ / (2·sin θ)` (Kα1 only).
+1. Parse `.xy` (2θ, intensity); window to 24°–27.5° (baseline-subtracted for B).
+2. Fit Pseudo-Voigt peak(s) with `scipy.optimize.curve_fit`.
+3. Bragg d-spacing per phase: `d = λ / (2·sin θ)`.
 4. Area fractions `X = A_i / ΣA`; weighted `d′ = X_g·d_g + X_t·d_t`.
 5. Maire–Mering: `DG% = (3.440 − d′) / (3.440 − 3.354) × 100`.
