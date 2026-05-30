@@ -1,0 +1,20 @@
+# Test / sample data — not committed
+*.xy
+*.brml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Vercel / build
+.vercel/
+node_modules/
+
+# matplotlib cache
+.matplotlib/
+
+# OS
+.DS_Store
