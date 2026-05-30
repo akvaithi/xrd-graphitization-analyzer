@@ -61,7 +61,7 @@ TEXT      = "#c0caf5"
 
 def render_plot(pattern: XRDPattern, res: dict) -> str:
     """Render the fit for a method's result to a base64 PNG data-URI."""
-    fig = Figure(figsize=(6.4, 4.6), dpi=110, facecolor=PANEL)
+    fig = Figure(figsize=(6.4, 4.6), dpi=200, facecolor=PANEL)
     ax = fig.add_subplot(111)
     ax.set_facecolor("#12121e")
 
@@ -110,7 +110,7 @@ def render_plot(pattern: XRDPattern, res: dict) -> str:
     fig.tight_layout(pad=1.4)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor=PANEL)
+    fig.savefig(buf, format="png", facecolor=PANEL, dpi=200)
     buf.seek(0)
     return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
 
