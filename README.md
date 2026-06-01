@@ -67,30 +67,40 @@ each X value so replicate runs don't create zig-zags.
 
 ## Deploy
 
-### Docker (recommended — self-hosted)
+The scipy/matplotlib stack wants real RAM, so a container on your own host is the
+most reliable option. The included `Dockerfile` binds `0.0.0.0:$PORT` (default
+8000), pre-builds matplotlib's font cache, and has a healthcheck.
 
-The scipy/matplotlib stack is happiest with real RAM, so a container on your own
-host is the most reliable option. Includes a `Dockerfile` and `docker-compose.yml`.
+### Coolify (recommended — self-hosted PaaS)
+
+Coolify builds this repo's `Dockerfile` and runs it behind its own proxy with
+automatic TLS and push-to-deploy. No config file needed.
+
+1. **+ New Resource → Public/Private Git Repository** → select this repo / branch `main`.
+2. **Build Pack: `Dockerfile`**.
+3. **Ports Exposes: `8000`** (the port the app listens on).
+4. (Optional) set a **Domain** — Coolify provisions Let's Encrypt TLS.
+5. **Deploy**. Enable the auto-deploy webhook so each push redeploys.
+
+The app already sets `PORT=8000` in the image, so it binds `0.0.0.0` for
+Coolify's proxy without any extra env. Healthcheck path `/` (or rely on the
+Dockerfile `HEALTHCHECK`).
+
+### Plain Docker
 
 ```bash
-# with compose
 docker compose up -d --build         # → http://<host>:8000
-
-# or plain docker
+# or
 docker build -t xrd-analyzer .
 docker run -d --restart unless-stopped -p 8000:8000 xrd-analyzer
 ```
-
-The container binds `0.0.0.0:$PORT` (default 8000) and has a built-in
-healthcheck. Put it behind your reverse proxy (nginx/Caddy/Traefik) for TLS.
 
 ### Render (managed)
 
 A `render.yaml` blueprint + `Procfile` are included; a connected repo auto-deploys
 on each push. Note the **free tier is 512 MB RAM**, which can OOM under the
-scipy/matplotlib + plot-rendering workload — use Docker on a larger host, or a
-paid Render instance, if it crashes. The same `Procfile` works on
-Railway/Heroku-style hosts.
+scipy/matplotlib + plot-rendering workload — prefer Coolify/Docker on a larger
+host. The same `Procfile` works on Railway/Heroku-style hosts.
 
 ## Pipeline
 
