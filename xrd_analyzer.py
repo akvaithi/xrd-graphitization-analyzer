@@ -496,7 +496,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "  python xrd_analyzer.py sample.xy --method A\n"
             "  python xrd_analyzer.py sample.xy --method B --json\n"
             "  python xrd_analyzer.py *.xy --method B --csv results.csv\n"
-            "  python xrd_analyzer.py sample.xy --wavelength 1.5406\n"
         ),
     )
     parser.add_argument("filepaths", nargs="+", metavar="FILE_OR_DIR",
@@ -504,9 +503,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--method", choices=METHODS, default="A",
                         help="A = NETL paper standard (default); "
                              "B = OriginLab PsdVoigt1 single-vs-dual + Lc.")
-    parser.add_argument("--wavelength", type=float, default=DEFAULT_WAVELENGTH,
-                        metavar="ANGSTROM",
-                        help=f"X-ray wavelength in Å (default {DEFAULT_WAVELENGTH}).")
     parser.add_argument("--csv", dest="csv_path", default=None, metavar="FILE",
                         help="Write results as CSV to FILE ('-' for stdout).")
     parser.add_argument("--json", action="store_true", dest="json_output",
@@ -530,7 +526,7 @@ def main() -> None:
     if len(files) == 1 and not args.csv_path:
         fp = files[0]
         try:
-            result = analyze_file(fp, args.method, args.wavelength)
+            result = analyze_file(fp, args.method)
         except FileNotFoundError as exc:
             _fail(f"file not found — '{exc.filename or fp}'", args.json_output)
         except (FitError, ValueError) as exc:
@@ -545,7 +541,7 @@ def main() -> None:
         return
 
     # ---- batch mode ----
-    results = analyze_batch(files, args.method, args.wavelength)
+    results = analyze_batch(files, args.method)
     if args.csv_path:
         if args.csv_path == "-":
             write_batch_csv(results, sys.stdout)

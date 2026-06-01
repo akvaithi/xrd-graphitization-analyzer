@@ -6,8 +6,8 @@ each uploaded .xy file it computes BOTH calculation methods (A = NETL paper
 standard; B = OriginLab PsdVoigt1 single-vs-dual) and returns results + fit
 plots. A dropdown switches the displayed method; multiple files are paged.
 
-No Tk (works where macOS Tcl/Tk is broken) and no .brml — wavelength is a
-numeric setting (default 1.54187 Å).
+No Tk (works where macOS Tcl/Tk is broken) and no .brml. Wavelength is fixed to
+the Cu Kα standard (1.54187 Å) in xrd_analyzer.DEFAULT_WAVELENGTH.
 
 Usage:
     python3 xrd_webgui.py                 # http://127.0.0.1:8000 (opens browser)
@@ -35,7 +35,6 @@ from matplotlib.figure import Figure
 
 from xrd_analyzer import (
     ANALYSIS_WINDOW,
-    DEFAULT_WAVELENGTH,
     FitError,
     GraphitizationAnalyzer,
     XRDPattern,
@@ -145,10 +144,8 @@ INDEX_HTML = """<!DOCTYPE html>
   button.primary { background:var(--accent); color:var(--bg); font-weight:600; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   #fname { color:var(--muted); font-size:13px; font-family:monospace; }
-  select, input[type=number] { background:var(--btn); color:var(--text); border:none;
+  select { background:var(--btn); color:var(--text); border:none;
            border-radius:6px; padding:8px 10px; font-size:13px; }
-  input[type=number] { width:96px; }
-  label.lam { color:var(--muted); font-size:12px; }
   main { display:grid; grid-template-columns:380px 1fr; gap:16px; padding:16px; }
   @media (max-width:860px){ main{ grid-template-columns:1fr; } }
   .card { background:var(--panel); border-radius:10px; padding:18px; }
@@ -185,7 +182,6 @@ INDEX_HTML = """<!DOCTYPE html>
       <input id="file" type="file" accept=".xy,.txt,.dat,text/plain" multiple style="display:none">
     </label>
     <span id="fname">no file selected</span>
-    <label class="lam">λ (Å)<input id="lambda" type="number" step="0.0001" value="1.54187"></label>
     <select id="method" title="Which method's results to view (both are computed)">
       <option value="A">View: Method A (NETL paper)</option>
       <option value="B">View: Method B (OriginLab single/dual)</option>
@@ -214,7 +210,6 @@ INDEX_HTML = """<!DOCTYPE html>
 
 <script>
 const fileInput = document.getElementById('file');
-const lambdaEl  = document.getElementById('lambda');
 const methodSel = document.getElementById('method');
 const fnameEl   = document.getElementById('fname');
 const analyzeBtn= document.getElementById('analyze');
@@ -255,7 +250,7 @@ async function analyzeOne(file){
   try {
     const resp = await fetch('/analyze', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({xy:file.text, wavelength:parseFloat(lambdaEl.value)}),
+      body: JSON.stringify({xy:file.text}),
     });
     const data = await resp.json();
     if (!resp.ok || data.error) return {name:file.name, error:(data.error||resp.statusText)};
@@ -382,15 +377,10 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(length).decode("utf-8", errors="replace"))
             xy_text = payload.get("xy", "")
-            try:
-                wavelength = float(payload.get("wavelength", DEFAULT_WAVELENGTH))
-                if wavelength <= 0:
-                    wavelength = DEFAULT_WAVELENGTH
-            except (TypeError, ValueError):
-                wavelength = DEFAULT_WAVELENGTH
 
+            # Wavelength is fixed to the Cu Kα standard (see DEFAULT_WAVELENGTH).
             pattern = XRDPattern.from_text(xy_text)
-            analyzer = GraphitizationAnalyzer(pattern, wavelength)
+            analyzer = GraphitizationAnalyzer(pattern)
 
             out: dict = {}
             for method in ("A", "B"):

@@ -20,9 +20,9 @@ a local/zero-Tk web GUI that computes both methods at once.
   4. Crystallite stacking height **Lc = 0.89·λ / (B·cos(θ/2))** from the
      graphitic FWHM.
 
-X-ray wavelength is configurable; default **λ = 1.54187 Å** (NETL standard).
-`OptimizeWarning` / fit failures (e.g. high amorphous content) are caught and
-reported cleanly.
+X-ray wavelength is fixed to the Cu Kα standard **λ = 1.54187 Å** (NETL),
+defined once in `xrd_analyzer.DEFAULT_WAVELENGTH`. `OptimizeWarning` / fit
+failures (e.g. high amorphous content) are caught and reported cleanly.
 
 Dependencies: `numpy`, `scipy`, `matplotlib`.
 
@@ -31,7 +31,6 @@ Dependencies: `numpy`, `scipy`, `matplotlib`.
 ```bash
 python3 xrd_analyzer.py sample.xy --method A
 python3 xrd_analyzer.py sample.xy --method B --json
-python3 xrd_analyzer.py sample.xy --wavelength 1.5406
 
 # Batch (multiple files / a directory) → table, JSON array, or CSV
 python3 xrd_analyzer.py *.xy --method B --csv results.csv
@@ -49,7 +48,7 @@ python3 xrd_webgui.py            # serves http://127.0.0.1:8000
 python3 xrd_webgui.py --port 8642
 ```
 
-Choose one or more `.xy` files, set the wavelength, and click **Analyze**. **Both
+Choose one or more `.xy` files and click **Analyze**. **Both
 methods are computed**; the dropdown switches which method's results + plot are
 shown, and multiple files are paged. The server honours `$PORT`/`$HOST` (binds
 `0.0.0.0` when `$PORT` is set), so it runs unchanged on container hosts.
