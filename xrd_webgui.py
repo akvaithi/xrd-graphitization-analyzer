@@ -40,6 +40,7 @@ from xrd_analyzer import (
     XRDPattern,
     pseudo_voigt,
 )
+from run_parser import parse_run_filename
 
 # ---------------------------------------------------------------------------
 # Plot colours (dark theme)
@@ -115,6 +116,133 @@ def render_plot(pattern: XRDPattern, res: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Dashboard — parse run parameters, analyse, build dataset & comparison charts
+# ---------------------------------------------------------------------------
+
+# Selectable chart axes / metrics and their display labels
+X_LABELS = {
+    "temperature_C": "Temperature (°C)",
+    "caco3_ratio":   "CaCO₃ ratio",
+    "time_h":        "Dwell time (h)",
+    "fe_ratio":      "Fe ratio",
+    "carbon_ratio":  "Carbon ratio",
+}
+Y_LABELS = {
+    "DG_B":             "DG% — NETL dual (Method B)",
+    "DG_A":             "DG% — Method A",
+    "Lc":               "Crystallite height Lc (Å)",
+    "dg_overestimation": "DG% overestimation (legacy − NETL)",
+    "d_prime_B":        "d′ weighted (Å)",
+}
+GROUP_LABELS = {
+    "carbon_type": "Carbon type",
+    "form":        "Sample form",
+    "wash":        "Wash state",
+    "none":        "(none)",
+}
+# Distinct colours for grouped series
+_SERIES_COLORS = ["#7aa2f7", "#f7768e", "#9ece6a", "#e0af68", "#bb9af7",
+                  "#7dcfff", "#ff9e64", "#9d7cd8"]
+
+
+def build_dashboard_rows(files: list[dict]) -> list[dict]:
+    """
+    For each {name, xy} entry: parse run parameters from the name and analyse
+    the pattern with both methods. Returns one flat row per file.
+    """
+    rows: list[dict] = []
+    for f in files:
+        name = f.get("name", "")
+        row = parse_run_filename(name)
+        row["file"] = name
+        # defaults
+        for k in ("DG_A", "DG_B", "Lc", "dg_overestimation", "d_prime_B", "graphitic_xc_B"):
+            row[k] = None
+        try:
+            analyzer = GraphitizationAnalyzer(XRDPattern.from_text(f.get("xy", "")))
+            try:
+                row["DG_A"] = analyzer.run("A")["DG_percent"]
+            except (FitError, ValueError):
+                pass
+            try:
+                b = analyzer.run("B")
+                row["DG_B"] = b["DG_percent"]
+                row["Lc"] = b["crystallite_height_Lc_angstrom"]
+                row["dg_overestimation"] = b["dg_overestimation_percent"]
+                row["d_prime_B"] = b["d_spacing_weighted_angstrom"]
+                row["graphitic_xc_B"] = b["graphitic"]["xc"]
+            except (FitError, ValueError):
+                pass
+        except ValueError as exc:
+            row["error"] = str(exc)
+        if row.get("DG_A") is None and row.get("DG_B") is None and "error" not in row:
+            row["error"] = "fit failed (possible high amorphous content)"
+        rows.append(row)
+    return rows
+
+
+def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str) -> str:
+    """Scatter/line chart of metric ``y`` vs parameter ``x``, grouped by ``group``."""
+    if x not in X_LABELS:
+        x = "temperature_C"
+    if y not in Y_LABELS:
+        y = "DG_B"
+    if group not in GROUP_LABELS:
+        group = "carbon_type"
+
+    fig = Figure(figsize=(6.6, 4.6), dpi=200, facecolor=PANEL)
+    ax = fig.add_subplot(111)
+    ax.set_facecolor("#12121e")
+
+    # bucket points by group value
+    series: dict[str, list[tuple]] = {}
+    for r in rows:
+        xv, yv = r.get(x), r.get(y)
+        if xv is None or yv is None:
+            continue
+        gv = "all" if group == "none" else (r.get(group) or "unspecified")
+        series.setdefault(str(gv), []).append((float(xv), float(yv)))
+
+    if not series:
+        ax.text(0.5, 0.5, "No data for this combination", transform=ax.transAxes,
+                ha="center", va="center", color=MUTED, fontsize=11)
+    else:
+        for i, (gv, pts) in enumerate(sorted(series.items())):
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            color = _SERIES_COLORS[i % len(_SERIES_COLORS)]
+            # Trend line through the MEAN y at each distinct x (avoids zigzag
+            # when several runs share a temperature / parameter value).
+            buckets: dict[float, list[float]] = {}
+            for xv, yv in pts:
+                buckets.setdefault(xv, []).append(yv)
+            mx = sorted(buckets)
+            if len(mx) > 1:
+                my = [sum(buckets[v]) / len(buckets[v]) for v in mx]
+                ax.plot(mx, my, "-", color=color, lw=1.3, alpha=0.45, zorder=2)
+            ax.scatter(xs, ys, s=46, color=color, edgecolor="#12121e",
+                       linewidth=0.6, zorder=3,
+                       label=(gv if group != "none" else None))
+        if group != "none":
+            ax.legend(title=GROUP_LABELS[group], fontsize=8, title_fontsize=8.5,
+                      facecolor=PANEL, edgecolor=MUTED, labelcolor=TEXT, framealpha=0.9)
+
+    ax.tick_params(colors=MUTED, labelsize=8)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(MUTED)
+    ax.grid(True, color="#23233a", lw=0.6)
+    ax.set_xlabel(X_LABELS[x], color=MUTED, fontsize=9)
+    ax.set_ylabel(Y_LABELS[y], color=MUTED, fontsize=9)
+    ax.set_title(f"{Y_LABELS[y]}  vs  {X_LABELS[x]}", color=TEXT, fontsize=9.5, pad=8)
+    fig.tight_layout(pad=1.4)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=PANEL, dpi=200)
+    buf.seek(0)
+    return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
+
+
+# ---------------------------------------------------------------------------
 # HTML page
 # ---------------------------------------------------------------------------
 
@@ -146,6 +274,9 @@ INDEX_HTML = """<!DOCTYPE html>
   #fname { color:var(--muted); font-size:13px; font-family:monospace; }
   select { background:var(--btn); color:var(--text); border:none;
            border-radius:6px; padding:8px 10px; font-size:13px; }
+  .navlink { color:var(--amber); text-decoration:none; font-size:13px; font-weight:600;
+             padding:6px 12px; border:1px solid var(--amber); border-radius:6px; }
+  .navlink:hover { background:var(--amber); color:var(--bg); }
   main { display:grid; grid-template-columns:380px 1fr; gap:16px; padding:16px; }
   @media (max-width:860px){ main{ grid-template-columns:1fr; } }
   .card { background:var(--panel); border-radius:10px; padding:18px; }
@@ -177,6 +308,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <body>
 <header>
   <h1>XRD Graphitization Analyzer</h1>
+  <a class="navlink" href="/dashboard">Run Dashboard →</a>
   <div class="controls">
     <label class="filebtn">Choose .xy file(s)…
       <input id="file" type="file" accept=".xy,.txt,.dat,text/plain" multiple style="display:none">
@@ -349,6 +481,166 @@ function renderResults(d){
 """
 
 
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XRD Run Dashboard</title>
+<style>
+  :root { --bg:#1e1e2e; --panel:#2a2a3e; --accent:#7aa2f7; --green:#9ece6a;
+          --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system,Helvetica,Arial,sans-serif; }
+  header { background:var(--panel); padding:14px 22px; display:flex; align-items:center;
+           gap:14px; flex-wrap:wrap; border-bottom:1px solid #12121e; }
+  header h1 { font-size:18px; color:var(--accent); margin:0; }
+  .navlink { color:var(--amber); text-decoration:none; font-size:13px; font-weight:600;
+             padding:6px 12px; border:1px solid var(--amber); border-radius:6px; }
+  .navlink:hover { background:var(--amber); color:var(--bg); }
+  button, .filebtn { background:var(--btn); color:var(--text); border:none; border-radius:6px;
+    padding:8px 16px; font-size:13px; cursor:pointer; transition:background .15s; }
+  button:hover, .filebtn:hover { background:var(--btnact); }
+  button.primary { background:var(--accent); color:var(--bg); font-weight:600; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  #fname { color:var(--muted); font-size:13px; font-family:monospace; }
+  select { background:var(--btn); color:var(--text); border:none; border-radius:6px;
+           padding:7px 10px; font-size:13px; }
+  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px; }
+  @media (max-width:980px){ main{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border-radius:10px; padding:16px; overflow:auto; }
+  .card h2 { font-size:14px; color:var(--accent); margin:0 0 10px; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th, td { padding:5px 8px; text-align:right; border-bottom:1px solid #23233a; white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); }
+  td.lbl, th.lbl { text-align:left; max-width:240px; overflow:hidden; text-overflow:ellipsis; }
+  td.miss { color:var(--muted); }
+  tr.err td { color:#f7768e; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .chip { background:#12121e; color:var(--text); border-radius:12px; padding:3px 10px; font-size:11px; }
+  .ctrls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .ctrls label { color:var(--muted); font-size:12px; }
+  #chartimg { width:100%; border-radius:8px; display:block; }
+  #status { padding:8px 22px; background:#12121e; color:var(--muted); font-size:12px; }
+  #status.error { color:#f7768e; }
+  .placeholder { color:var(--muted); text-align:center; padding:40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>XRD Run Dashboard</h1>
+  <a class="navlink" href="/">← Analyzer</a>
+  <label class="filebtn">Choose .xy files…
+    <input id="files" type="file" accept=".xy,.txt,.dat,text/plain" multiple style="display:none">
+  </label>
+  <span id="fname">no files selected</span>
+  <button id="run" class="primary" disabled>Analyze runs</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Parsed runs &amp; results</h2>
+    <div id="chips" class="chips"></div>
+    <div id="tablewrap"><div class="placeholder">Upload .xy files to extract run parameters.</div></div>
+  </div>
+  <div class="card">
+    <h2>Comparison chart</h2>
+    <div class="ctrls">
+      <label>Y<select id="ySel"></select></label>
+      <label>X<select id="xSel"></select></label>
+      <label>Group<select id="gSel"></select></label>
+    </div>
+    <div id="chartwrap"><div class="placeholder">Chart appears after analysis.</div></div>
+  </div>
+</main>
+
+<div id="status">Ready.</div>
+
+<script>
+const X = {temperature_C:"Temperature (°C)", caco3_ratio:"CaCO₃ ratio", time_h:"Dwell time (h)",
+           fe_ratio:"Fe ratio", carbon_ratio:"Carbon ratio"};
+const Y = {DG_B:"DG% (NETL dual)", DG_A:"DG% (Method A)", Lc:"Crystallite Lc (Å)",
+           dg_overestimation:"DG% overestimation", d_prime_B:"d′ weighted (Å)"};
+const G = {carbon_type:"Carbon type", form:"Sample form", wash:"Wash state", none:"(none)"};
+
+const filesEl=document.getElementById('files'), fnameEl=document.getElementById('fname');
+const runBtn=document.getElementById('run'), statusEl=document.getElementById('status');
+const tablewrap=document.getElementById('tablewrap'), chartwrap=document.getElementById('chartwrap');
+const chipsEl=document.getElementById('chips');
+const xSel=document.getElementById('xSel'), ySel=document.getElementById('ySel'), gSel=document.getElementById('gSel');
+let xy=[], rows=[];
+
+function setStatus(m,e=false){ statusEl.textContent=m; statusEl.className=e?'error':''; }
+function opts(sel,map){ sel.innerHTML=Object.entries(map).map(([k,v])=>`<option value="${k}">${v}</option>`).join(''); }
+opts(xSel,X); opts(ySel,Y); opts(gSel,G);
+ySel.value='DG_B'; xSel.value='temperature_C'; gSel.value='carbon_type';
+function readText(f){ return new Promise((res,rej)=>{const r=new FileReader();
+  r.onload=e=>res(e.target.result); r.onerror=()=>rej(new Error('read '+f.name)); r.readAsText(f);}); }
+
+filesEl.addEventListener('change', async e=>{
+  const fs=Array.from(e.target.files||[]); if(!fs.length) return;
+  try{ xy=await Promise.all(fs.map(async f=>({name:f.name, xy:await readText(f)}))); }
+  catch(err){ setStatus('Read error: '+err,true); return; }
+  fnameEl.textContent=`${xy.length} file(s) selected`; runBtn.disabled=false;
+  setStatus(`${xy.length} file(s) loaded — click Analyze runs.`);
+});
+
+runBtn.addEventListener('click', async ()=>{
+  if(!xy.length){ setStatus('No files selected.',true); return; }
+  runBtn.disabled=true; runBtn.textContent='Working…'; setStatus(`Analyzing ${xy.length} runs (both methods)…`);
+  try{
+    const resp=await fetch('/batch_analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({files:xy})});
+    const data=await resp.json();
+    if(!resp.ok||data.error){ setStatus('Error: '+(data.error||resp.statusText),true); }
+    else { rows=data.rows; renderTable(); renderChips(); await drawChart();
+      const ok=rows.filter(r=>!r.error).length;
+      setStatus(`Done — ${ok}/${rows.length} run(s) analyzed.`); }
+  }catch(err){ setStatus('Request failed: '+err,true); }
+  finally{ runBtn.disabled=false; runBtn.textContent='Analyze runs'; }
+});
+[xSel,ySel,gSel].forEach(s=>s.addEventListener('change', drawChart));
+
+function cell(v,dig){ if(v===null||v===undefined||v==='') return '<td class="miss">–</td>';
+  return `<td>${typeof v==='number'?v.toFixed(dig):v}</td>`; }
+
+function renderTable(){
+  const head=['Run','Type','C','Fe','CaCO₃','T(°C)','t(h)','Form','Wash','DG%·A','DG%·B','Lc(Å)'];
+  let h='<table><thead><tr><th class="lbl">'+head[0]+'</th>'+head.slice(1).map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>';
+  for(const r of rows){
+    const cls=r.error?' class="err"':'';
+    h+=`<tr${cls}><td class="lbl" title="${r.file}">${r.label||r.file}</td>`+
+       cell(r.carbon_type)+cell(r.carbon_ratio,0)+cell(r.fe_ratio,0)+cell(r.caco3_ratio,4)+
+       cell(r.temperature_C,0)+cell(r.time_h,0)+cell(r.form)+cell(r.wash)+
+       cell(r.DG_A,2)+cell(r.DG_B,2)+cell(r.Lc,1)+'</tr>';
+  }
+  tablewrap.innerHTML=h+'</tbody></table>';
+}
+
+function renderChips(){
+  const count=(k)=>{ const m={}; rows.forEach(r=>{const v=r[k]??'—'; m[v]=(m[v]||0)+1;});
+    return Object.entries(m).map(([v,n])=>`${v}:${n}`).join('  '); };
+  chipsEl.innerHTML = [`${rows.length} runs`, 'Carbon — '+count('carbon_type'),
+    'Form — '+count('form'), 'Temp — '+count('temperature_C')]
+    .map(t=>`<span class="chip">${t}</span>`).join('');
+}
+
+async function drawChart(){
+  if(!rows.length) return;
+  chartwrap.innerHTML='<div class="placeholder">Rendering…</div>';
+  const resp=await fetch('/chart',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({rows, x:xSel.value, y:ySel.value, group:gSel.value})});
+  const data=await resp.json();
+  if(data.chart_png) chartwrap.innerHTML=`<img id="chartimg" src="${data.chart_png}" alt="chart">`;
+  else chartwrap.innerHTML=`<div class="placeholder">${data.error||'no chart'}</div>`;
+}
+</script>
+</body>
+</html>
+"""
+
+
 # ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
@@ -364,40 +656,63 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_json(self) -> dict:
+        length = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(length).decode("utf-8", errors="replace"))
+
     def do_GET(self) -> None:
-        # Path-tolerant: serve the SPA for any GET except the analyze endpoint
-        if self.path.rstrip("/").endswith("/analyze"):
-            self._send(405, "text/plain; charset=utf-8", b"Use POST for /analyze")
+        path = self.path.rstrip("/")
+        if path.endswith(("/analyze", "/batch_analyze", "/chart")):
+            self._send(405, "text/plain; charset=utf-8", b"Use POST for this endpoint")
+        elif "dashboard" in path:
+            self._send(200, "text/html; charset=utf-8", DASHBOARD_HTML.encode("utf-8"))
         else:
             self._send(200, "text/html; charset=utf-8", INDEX_HTML.encode("utf-8"))
 
     def do_POST(self) -> None:
-        # Any POST is an analyze request (single endpoint, deployment-tolerant)
+        path = self.path.rstrip("/")
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            payload = json.loads(self.rfile.read(length).decode("utf-8", errors="replace"))
-            xy_text = payload.get("xy", "")
-
-            # Wavelength is fixed to the Cu Kα standard (see DEFAULT_WAVELENGTH).
-            pattern = XRDPattern.from_text(xy_text)
-            analyzer = GraphitizationAnalyzer(pattern)
-
-            out: dict = {}
-            for method in ("A", "B"):
-                try:
-                    res = analyzer.run(method)
-                    res["plot_png"] = render_plot(pattern, res)
-                except (FitError, ValueError) as exc:
-                    res = {"method": method, "error": str(exc)}
-                out[method] = res
-
-            self._send(200, "application/json", json.dumps(out).encode("utf-8"))
+            if path.endswith("/batch_analyze"):
+                self._handle_batch()
+            elif path.endswith("/chart"):
+                self._handle_chart()
+            else:
+                self._handle_analyze()
         except ValueError as exc:
-            self._send(400, "application/json",
-                       json.dumps({"error": str(exc)}).encode("utf-8"))
+            self._send(400, "application/json", json.dumps({"error": str(exc)}).encode("utf-8"))
         except Exception as exc:  # noqa: BLE001
             self._send(500, "application/json",
                        json.dumps({"error": f"unexpected error — {exc}"}).encode("utf-8"))
+
+    # -- endpoints -----------------------------------------------------------
+
+    def _handle_analyze(self) -> None:
+        payload = self._read_json()
+        pattern = XRDPattern.from_text(payload.get("xy", ""))
+        analyzer = GraphitizationAnalyzer(pattern)
+        out: dict = {}
+        for method in ("A", "B"):
+            try:
+                res = analyzer.run(method)
+                res["plot_png"] = render_plot(pattern, res)
+            except (FitError, ValueError) as exc:
+                res = {"method": method, "error": str(exc)}
+            out[method] = res
+        self._send(200, "application/json", json.dumps(out).encode("utf-8"))
+
+    def _handle_batch(self) -> None:
+        payload = self._read_json()
+        files = payload.get("files", [])
+        rows = build_dashboard_rows(files)
+        self._send(200, "application/json", json.dumps({"rows": rows}).encode("utf-8"))
+
+    def _handle_chart(self) -> None:
+        payload = self._read_json()
+        png = render_dashboard_chart(payload.get("rows", []),
+                                     payload.get("x", "temperature_C"),
+                                     payload.get("y", "DG_B"),
+                                     payload.get("group", "carbon_type"))
+        self._send(200, "application/json", json.dumps({"chart_png": png}).encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------

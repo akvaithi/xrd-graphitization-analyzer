@@ -53,6 +53,18 @@ methods are computed**; the dropdown switches which method's results + plot are
 shown, and multiple files are paged. The server honours `$PORT`/`$HOST` (binds
 `0.0.0.0` when `$PORT` is set), so it runs unchanged on container hosts.
 
+### Run Dashboard
+
+A second page (**Run Dashboard →**) analyses many runs at once and graphs them
+against their synthesis parameters. Run parameters are extracted from the (often
+non-standard) **file names** — carbon type (GPC/CPC), carbon/Fe/CaCO₃ ratios,
+temperature, dwell time, sample form (puck/powder), and wash state — by a
+tolerant regex parser ([run_parser.py](run_parser.py)) that doesn't care about
+separator or casing. The dashboard then shows a parsed-runs table and an
+interactive comparison chart (e.g. **DG% vs Temperature, grouped by carbon
+type**) with selectable X / Y / grouping; the trend line follows the mean at
+each X value so replicate runs don't create zig-zags.
+
 ## Deploy (Render)
 
 Includes a `render.yaml` blueprint and a `Procfile`. On a connected repo, Render
