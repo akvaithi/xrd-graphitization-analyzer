@@ -521,7 +521,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .chip { background:#12121e; color:var(--text); border-radius:12px; padding:3px 10px; font-size:11px; }
   .ctrls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
   .ctrls label { color:var(--muted); font-size:12px; }
-  #chartimg { width:100%; border-radius:8px; display:block; }
+  .tablecard { grid-column:1 / -1; }
+  .mini { font-size:11px; padding:4px 10px; margin-left:10px; vertical-align:middle; }
+  .chartimg { width:100%; border-radius:8px; display:block; }
   #status { padding:8px 22px; background:#12121e; color:var(--muted); font-size:12px; }
   #status.error { color:#f7768e; }
   .placeholder { color:var(--muted); text-align:center; padding:40px 0; }
@@ -539,19 +541,29 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </header>
 
 <main>
-  <div class="card">
-    <h2>Parsed runs &amp; results</h2>
+  <div class="card tablecard">
+    <h2>Parsed runs &amp; results
+      <button id="csvBtn" class="mini" disabled>Download CSV</button></h2>
     <div id="chips" class="chips"></div>
     <div id="tablewrap"><div class="placeholder">Upload .xy files to extract run parameters.</div></div>
   </div>
   <div class="card">
-    <h2>Comparison chart</h2>
+    <h2>Chart 1</h2>
     <div class="ctrls">
-      <label>Y<select id="ySel"></select></label>
-      <label>X<select id="xSel"></select></label>
-      <label>Group<select id="gSel"></select></label>
+      <label>Y<select id="ySel1"></select></label>
+      <label>X<select id="xSel1"></select></label>
+      <label>Group<select id="gSel1"></select></label>
     </div>
-    <div id="chartwrap"><div class="placeholder">Chart appears after analysis.</div></div>
+    <div id="chartwrap1"><div class="placeholder">Chart appears after analysis.</div></div>
+  </div>
+  <div class="card">
+    <h2>Chart 2</h2>
+    <div class="ctrls">
+      <label>Y<select id="ySel2"></select></label>
+      <label>X<select id="xSel2"></select></label>
+      <label>Group<select id="gSel2"></select></label>
+    </div>
+    <div id="chartwrap2"><div class="placeholder">Chart appears after analysis.</div></div>
   </div>
 </main>
 
@@ -566,15 +578,24 @@ const G = {carbon_type:"Carbon type", form:"Sample form", wash:"Wash state", non
 
 const filesEl=document.getElementById('files'), fnameEl=document.getElementById('fname');
 const runBtn=document.getElementById('run'), statusEl=document.getElementById('status');
-const tablewrap=document.getElementById('tablewrap'), chartwrap=document.getElementById('chartwrap');
-const chipsEl=document.getElementById('chips');
-const xSel=document.getElementById('xSel'), ySel=document.getElementById('ySel'), gSel=document.getElementById('gSel');
+const csvBtn=document.getElementById('csvBtn');
+const tablewrap=document.getElementById('tablewrap'), chipsEl=document.getElementById('chips');
+// Two independent chart panels (suffix 1 / 2)
+const panels={
+  '1':{x:document.getElementById('xSel1'), y:document.getElementById('ySel1'),
+       g:document.getElementById('gSel1'), wrap:document.getElementById('chartwrap1')},
+  '2':{x:document.getElementById('xSel2'), y:document.getElementById('ySel2'),
+       g:document.getElementById('gSel2'), wrap:document.getElementById('chartwrap2')},
+};
 let xy=[], rows=[];
 
 function setStatus(m,e=false){ statusEl.textContent=m; statusEl.className=e?'error':''; }
 function opts(sel,map){ sel.innerHTML=Object.entries(map).map(([k,v])=>`<option value="${k}">${v}</option>`).join(''); }
-opts(xSel,X); opts(ySel,Y); opts(gSel,G);
-ySel.value='DG_B'; xSel.value='temperature_C'; gSel.value='carbon_type';
+for(const id of ['1','2']){ const p=panels[id]; opts(p.x,X); opts(p.y,Y); opts(p.g,G);
+  p.x.value='temperature_C'; p.g.value='carbon_type';
+  [p.x,p.y,p.g].forEach(s=>s.addEventListener('change',()=>drawChart(id))); }
+panels['1'].y.value='DG_B';   // default: DG% vs T
+panels['2'].y.value='Lc';     // default: Lc  vs T  (side-by-side comparison)
 function readText(f){ return new Promise((res,rej)=>{const r=new FileReader();
   r.onload=e=>res(e.target.result); r.onerror=()=>rej(new Error('read '+f.name)); r.readAsText(f);}); }
 
@@ -594,13 +615,15 @@ runBtn.addEventListener('click', async ()=>{
       body:JSON.stringify({files:xy})});
     const data=await resp.json();
     if(!resp.ok||data.error){ setStatus('Error: '+(data.error||resp.statusText),true); }
-    else { rows=data.rows; renderTable(); renderChips(); await drawChart();
+    else { rows=data.rows; renderTable(); renderChips(); csvBtn.disabled=false;
+      await Promise.all([drawChart('1'), drawChart('2')]);
       const ok=rows.filter(r=>!r.error).length;
       setStatus(`Done — ${ok}/${rows.length} run(s) analyzed.`); }
   }catch(err){ setStatus('Request failed: '+err,true); }
   finally{ runBtn.disabled=false; runBtn.textContent='Analyze runs'; }
 });
-[xSel,ySel,gSel].forEach(s=>s.addEventListener('change', drawChart));
+
+csvBtn.addEventListener('click', downloadCSV);
 
 function cell(v,dig){ if(v===null||v===undefined||v==='') return '<td class="miss">–</td>';
   return `<td>${typeof v==='number'?v.toFixed(dig):v}</td>`; }
@@ -626,14 +649,30 @@ function renderChips(){
     .map(t=>`<span class="chip">${t}</span>`).join('');
 }
 
-async function drawChart(){
+async function drawChart(id){
   if(!rows.length) return;
-  chartwrap.innerHTML='<div class="placeholder">Rendering…</div>';
+  const p=panels[id];
+  p.wrap.innerHTML='<div class="placeholder">Rendering…</div>';
   const resp=await fetch('/chart',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({rows, x:xSel.value, y:ySel.value, group:gSel.value})});
+    body:JSON.stringify({rows, x:p.x.value, y:p.y.value, group:p.g.value})});
   const data=await resp.json();
-  if(data.chart_png) chartwrap.innerHTML=`<img id="chartimg" src="${data.chart_png}" alt="chart">`;
-  else chartwrap.innerHTML=`<div class="placeholder">${data.error||'no chart'}</div>`;
+  if(data.chart_png) p.wrap.innerHTML=`<img class="chartimg" src="${data.chart_png}" alt="chart">`;
+  else p.wrap.innerHTML=`<div class="placeholder">${data.error||'no chart'}</div>`;
+}
+
+function downloadCSV(){
+  if(!rows.length) return;
+  const cols=['file','carbon_type','carbon_ratio','fe_ratio','caco3_ratio',
+    'temperature_C','time_h','form','wash','date','DG_A','DG_B','Lc',
+    'dg_overestimation','d_prime_B','graphitic_xc_B','error'];
+  const esc=v=>{ if(v===null||v===undefined) return '';
+    const s=String(v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+  const lines=[cols.join(',')];
+  for(const r of rows) lines.push(cols.map(c=>esc(r[c])).join(','));
+  const blob=new Blob([lines.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='xrd_runs.csv';
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
 }
 </script>
 </body>
