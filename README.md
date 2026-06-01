@@ -86,10 +86,22 @@ The app already sets `PORT=8000` in the image, so it binds `0.0.0.0` for
 Coolify's proxy without any extra env. Healthcheck path `/` (or rely on the
 Dockerfile `HEALTHCHECK`).
 
-### Plain Docker
+### Plain Docker — prebuilt image (GHCR)
+
+Each push publishes `ghcr.io/akvaithi/xrd-graphitization-analyzer:latest`
+(public), so you can pull instead of building:
 
 ```bash
-docker compose up -d --build         # → http://<host>:8000
+docker run -d --name xrd-analyzer --restart unless-stopped \
+  -p 8000:8000 ghcr.io/akvaithi/xrd-graphitization-analyzer:latest
+# or
+docker compose -f compose.ghcr.yml up -d
+```
+
+### Plain Docker — build locally
+
+```bash
+docker compose up -d --build         # builds from the Dockerfile
 # or
 docker build -t xrd-analyzer .
 docker run -d --restart unless-stopped -p 8000:8000 xrd-analyzer

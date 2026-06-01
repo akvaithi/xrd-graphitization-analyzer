@@ -1,0 +1,11 @@
+# Deploy the PREBUILT image from GHCR (no local build needed).
+#   docker compose -f compose.ghcr.yml up -d
+# or paste into ZimaOS/CasaOS "Custom App → Import compose".
+services:
+  xrd:
+    image: ghcr.io/akvaithi/xrd-graphitization-analyzer:latest
+    container_name: xrd-analyzer
+    ports:
+      - "8000:8000"          # host:container — change the host side if 8000 is taken
+    restart: unless-stopped
+    # (image already defines PORT=8000 and a HEALTHCHECK)
