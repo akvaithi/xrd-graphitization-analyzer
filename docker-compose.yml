@@ -1,0 +1,10 @@
+services:
+  xrd:
+    build: .
+    image: xrd-graphitization-analyzer
+    container_name: xrd-analyzer
+    ports:
+      - "8000:8000"          # host:container — change the host side as you like
+    environment:
+      - PORT=8000
+    restart: unless-stopped

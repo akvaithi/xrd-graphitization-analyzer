@@ -65,11 +65,32 @@ interactive comparison chart (e.g. **DG% vs Temperature, grouped by carbon
 type**) with selectable X / Y / grouping; the trend line follows the mean at
 each X value so replicate runs don't create zig-zags.
 
-## Deploy (Render)
+## Deploy
 
-Includes a `render.yaml` blueprint and a `Procfile`. On a connected repo, Render
-auto-deploys on each push (`pip install -r requirements.txt`, then
-`python3 xrd_webgui.py`). The same `Procfile` works on Railway/Heroku-style hosts.
+### Docker (recommended — self-hosted)
+
+The scipy/matplotlib stack is happiest with real RAM, so a container on your own
+host is the most reliable option. Includes a `Dockerfile` and `docker-compose.yml`.
+
+```bash
+# with compose
+docker compose up -d --build         # → http://<host>:8000
+
+# or plain docker
+docker build -t xrd-analyzer .
+docker run -d --restart unless-stopped -p 8000:8000 xrd-analyzer
+```
+
+The container binds `0.0.0.0:$PORT` (default 8000) and has a built-in
+healthcheck. Put it behind your reverse proxy (nginx/Caddy/Traefik) for TLS.
+
+### Render (managed)
+
+A `render.yaml` blueprint + `Procfile` are included; a connected repo auto-deploys
+on each push. Note the **free tier is 512 MB RAM**, which can OOM under the
+scipy/matplotlib + plot-rendering workload — use Docker on a larger host, or a
+paid Render instance, if it crashes. The same `Procfile` works on
+Railway/Heroku-style hosts.
 
 ## Pipeline
 
