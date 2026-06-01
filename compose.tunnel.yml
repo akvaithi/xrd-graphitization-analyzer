@@ -1,0 +1,25 @@
+# App + Cloudflare Tunnel on a shared network — public HTTPS, no open ports.
+#
+# 1. Create a tunnel in the Cloudflare Zero Trust dashboard and copy its TOKEN.
+# 2. Put the token in a .env file next to this one:
+#        CLOUDFLARE_TUNNEL_TOKEN=eyJ...   (paste the long token)
+# 3.  docker compose -f compose.tunnel.yml up -d
+# 4. In the tunnel's "Public Hostname" config, point your hostname to:
+#        Service:  HTTP   →   xrd:8000
+#    (cloudflared reaches the app by its service name on this compose network)
+services:
+  xrd:
+    image: ghcr.io/akvaithi/xrd-graphitization-analyzer:latest
+    container_name: xrd-analyzer
+    restart: unless-stopped
+    expose:
+      - "8000"               # internal only; no host port published
+    # To ALSO reach it on the LAN, add:  ports: ["8000:8000"]
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - xrd
