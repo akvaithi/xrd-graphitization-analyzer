@@ -114,6 +114,22 @@ on each push. Note the **free tier is 512 MB RAM**, which can OOM under the
 scipy/matplotlib + plot-rendering workload — prefer Coolify/Docker on a larger
 host. The same `Procfile` works on Railway/Heroku-style hosts.
 
+## Limits / hardening
+
+The web server applies basic abuse/DoS protection (no login — front it with
+Cloudflare Access / a reverse proxy if exposing publicly). All are env-overridable:
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `XRD_MAX_UPLOAD_MB` | `50` | Max request body; larger → **413** |
+| `XRD_MAX_BATCH_FILES` | `300` | Max files per dashboard batch; more → **400** |
+| `XRD_MAX_CONCURRENT` | `3` | Simultaneous fit/plot operations; excess waits then → **429** |
+| `XRD_BUSY_WAIT_SEC` | `20` | How long a request waits for a free slot |
+| `XRD_REQUEST_TIMEOUT` | `60` | Per-socket-op timeout (slowloris guard) |
+
+Responses also carry `X-Content-Type-Options`, `X-Frame-Options`, and
+`Referrer-Policy` headers.
+
 ## Pipeline
 
 1. Parse `.xy` (2θ, intensity); window to 24°–27.5° (baseline-subtracted for B).

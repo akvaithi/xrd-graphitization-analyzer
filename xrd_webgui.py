@@ -43,6 +43,20 @@ from xrd_analyzer import (
 from run_parser import parse_run_filename
 
 # ---------------------------------------------------------------------------
+# Request limits (env-overridable) — basic abuse / DoS protection
+# ---------------------------------------------------------------------------
+MAX_UPLOAD_MB   = float(os.environ.get("XRD_MAX_UPLOAD_MB", "50"))    # per request
+MAX_BODY_BYTES  = int(MAX_UPLOAD_MB * 1024 * 1024)
+MAX_BATCH_FILES = int(os.environ.get("XRD_MAX_BATCH_FILES", "300"))   # files per batch
+MAX_CONCURRENT  = int(os.environ.get("XRD_MAX_CONCURRENT", "3"))      # simultaneous heavy ops
+BUSY_WAIT_SEC   = float(os.environ.get("XRD_BUSY_WAIT_SEC", "20"))    # wait for a slot before 429
+REQUEST_TIMEOUT = float(os.environ.get("XRD_REQUEST_TIMEOUT", "60"))  # per-socket op (slowloris guard)
+
+# Limits concurrent CPU/RAM-heavy fitting+plotting across all POST endpoints.
+_work_sem = threading.BoundedSemaphore(MAX_CONCURRENT)
+
+
+# ---------------------------------------------------------------------------
 # Plot colours (dark theme)
 # ---------------------------------------------------------------------------
 PANEL     = "#2a2a3e"
@@ -685,6 +699,8 @@ function downloadCSV(){
 # ---------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
+    timeout = REQUEST_TIMEOUT          # per-socket-op timeout (slowloris guard)
+
     def log_message(self, fmt, *args):  # silence per-request logging
         pass
 
@@ -692,11 +708,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        # Lightweight hardening headers
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(body)
 
+    def _json_error(self, code: int, msg: str) -> None:
+        self.close_connection = True
+        self._send(code, "application/json", json.dumps({"error": msg}).encode("utf-8"))
+
     def _read_json(self) -> dict:
-        length = int(self.headers.get("Content-Length", 0))
+        length = int(self.headers.get("Content-Length", 0) or 0)
         return json.loads(self.rfile.read(length).decode("utf-8", errors="replace"))
 
     def do_GET(self) -> None:
@@ -710,6 +734,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.rstrip("/")
+
+        # 1) Body-size guard — reject before reading a huge body into memory.
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length > MAX_BODY_BYTES:
+            self._json_error(413, f"request too large (limit {MAX_UPLOAD_MB:.0f} MB)")
+            return
+
+        # 2) Concurrency cap — bound simultaneous CPU/RAM-heavy fitting/plotting.
+        if not _work_sem.acquire(timeout=BUSY_WAIT_SEC):
+            self._json_error(429, "server busy — too many analyses in progress, retry shortly")
+            return
         try:
             if path.endswith("/batch_analyze"):
                 self._handle_batch()
@@ -722,6 +757,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send(500, "application/json",
                        json.dumps({"error": f"unexpected error — {exc}"}).encode("utf-8"))
+        finally:
+            _work_sem.release()
 
     # -- endpoints -----------------------------------------------------------
 
@@ -742,6 +779,10 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_batch(self) -> None:
         payload = self._read_json()
         files = payload.get("files", [])
+        if len(files) > MAX_BATCH_FILES:
+            raise ValueError(
+                f"too many files in one batch ({len(files)}); limit is {MAX_BATCH_FILES} — "
+                "upload fewer at a time")
         rows = build_dashboard_rows(files)
         self._send(200, "application/json", json.dumps({"rows": rows}).encode("utf-8"))
 
@@ -780,6 +821,8 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
     print(f"XRD Graphitization Analyzer — serving at {url}", flush=True)
+    print(f"Limits: upload ≤ {MAX_UPLOAD_MB:.0f} MB/request, ≤ {MAX_BATCH_FILES} files/batch, "
+          f"{MAX_CONCURRENT} concurrent analyses.", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
 
     if not args.no_browser and not is_cloud:
