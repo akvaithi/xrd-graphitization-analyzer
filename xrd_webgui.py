@@ -38,6 +38,7 @@ from xrd_analyzer import (
     FitError,
     GraphitizationAnalyzer,
     XRDPattern,
+    dg_from_peaks,
     pseudo_voigt,
 )
 from run_parser import parse_run_filename
@@ -323,6 +324,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <header>
   <h1>XRD Graphitization Analyzer</h1>
   <a class="navlink" href="/dashboard">Run Dashboard →</a>
+  <a class="navlink" href="/manual">Manual Calc →</a>
   <div class="controls">
     <label class="filebtn">Choose .xy file(s)…
       <input id="file" type="file" accept=".xy,.txt,.dat,text/plain" multiple style="display:none">
@@ -473,20 +475,26 @@ function renderResults(d){
             row('baseline y0', d.baseline_y0.toFixed(4)) +
             row("d′ weighted", d.d_spacing_weighted_angstrom.toFixed(6),'Å');
   } else {
-    html += `<div class="section">Dual fit — Graphitic (NETL)</div>` + peakRows(d.graphitic) +
-            `<div class="section">Dual fit — Turbostratic (NETL)</div>` + peakRows(d.turbostratic) +
-            `<div class="section">Dual result (NETL)</div>` +
+    const recSingle = d.fit_recommendation === 'single-peak';
+    html += `<div class="section">NETL one-peak-first</div>` +
+            row('single-peak R²', d.single_peak_r2.toFixed(5)) +
+            row('dual-peak R²', d.dual_peak_r2.toFixed(5)) +
+            row('recommended fit', d.fit_recommendation.toUpperCase()) +
+            `<div class="section">Single fit (graphitic)</div>` + peakRows(d.single_peak) +
+            row('DG% single', d.DG_single_percent.toFixed(2),'%') +
+            `<div class="section">Dual fit (NETL)</div>` + peakRows(d.graphitic) +
+            row('turbostratic xc', d.turbostratic.xc.toFixed(4),'°') +
             row('X_g / X_t', pct(d.area_fraction_graphitic)+' / '+pct(d.area_fraction_turbostratic)) +
             row("d′ weighted", d.d_spacing_weighted_angstrom.toFixed(6),'Å') +
-            row('Crystallite Lc', d.crystallite_height_Lc_angstrom.toFixed(2),'Å') +
-            `<div class="section">Single fit (legacy)</div>` + peakRows(d.single_peak) +
-            row('DG% legacy', d.DG_single_percent.toFixed(2),'%') +
-            row('DG% overestimation', d.dg_overestimation_percent.toFixed(2),'%');
+            row('DG% dual', d.DG_percent.toFixed(2),'%') +
+            row('Crystallite Lc', d.crystallite_height_Lc_angstrom.toFixed(2),'Å');
   }
-  html += `<div class="dgbox"><div class="cap">Degree of Graphitization` +
-          (d.method==='B' ? ' (NETL dual)' : '') + `</div>` +
-          `<div class="dg">${d.DG_percent.toFixed(2)} %</div>` +
-          `<div class="cap">Maire-Mering equation</div></div>`;
+  const headlineDG = (d.method==='B') ? d.DG_recommended_percent : d.DG_percent;
+  const headlineCap = (d.method==='B')
+      ? `NETL recommended — ${d.fit_recommendation}` : 'Maire-Mering equation';
+  html += `<div class="dgbox"><div class="cap">Degree of Graphitization</div>` +
+          `<div class="dg">${headlineDG.toFixed(2)} %</div>` +
+          `<div class="cap">${headlineCap}</div></div>`;
   resultsEl.innerHTML = html;
 }
 </script>
@@ -694,6 +702,122 @@ function downloadCSV(){
 """
 
 
+MANUAL_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XRD Manual DG Calculator</title>
+<style>
+  :root { --bg:#1e1e2e; --panel:#2a2a3e; --accent:#7aa2f7; --green:#9ece6a;
+          --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system,Helvetica,Arial,sans-serif; }
+  header { background:var(--panel); padding:14px 22px; display:flex; align-items:center;
+           gap:14px; flex-wrap:wrap; border-bottom:1px solid #12121e; }
+  header h1 { font-size:18px; color:var(--accent); margin:0; }
+  .navlink { color:var(--amber); text-decoration:none; font-size:13px; font-weight:600;
+             padding:6px 12px; border:1px solid var(--amber); border-radius:6px; }
+  .navlink:hover { background:var(--amber); color:var(--bg); }
+  main { display:grid; grid-template-columns:minmax(300px,420px) 1fr; gap:16px; padding:16px; }
+  @media (max-width:820px){ main{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border-radius:10px; padding:18px; }
+  .card h2 { font-size:14px; color:var(--accent); margin:0 0 12px; }
+  .peakrow { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+  .peakrow label { color:var(--muted); font-size:12px; width:78px; }
+  input[type=number] { background:#12121e; color:var(--text); border:1px solid var(--muted);
+        border-radius:6px; padding:7px 9px; font-size:13px; width:120px; }
+  .hint { color:var(--muted); font-size:12px; margin:6px 0 14px; }
+  button { background:var(--accent); color:var(--bg); font-weight:600; border:none;
+           border-radius:6px; padding:9px 18px; font-size:13px; cursor:pointer; }
+  label.tog { color:var(--text); font-size:13px; display:flex; gap:8px; align-items:center;
+              margin-bottom:14px; }
+  .section { color:var(--accent); font-size:13px; font-weight:600; margin:14px 0 6px;
+             border-bottom:1px solid var(--muted); padding-bottom:4px; }
+  .row { display:flex; justify-content:space-between; padding:3px 0; font-size:13px; }
+  .row .val { color:var(--green); font-family:monospace; font-weight:600; }
+  .dgbox { margin-top:18px; background:#2d2038; border-radius:10px; padding:18px; text-align:center; }
+  .dgbox .dg { color:var(--amber); font-size:38px; font-weight:700; margin:6px 0; }
+  .dgbox .cap { color:var(--muted); font-size:12px; }
+  #status { padding:8px 22px; background:#12121e; color:var(--muted); font-size:12px; }
+  #status.error { color:#f7768e; }
+  .placeholder { color:var(--muted); text-align:center; padding:40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Manual DG Calculator</h1>
+  <a class="navlink" href="/">← Analyzer</a>
+  <a class="navlink" href="/dashboard">Dashboard →</a>
+</header>
+<main>
+  <div class="card">
+    <h2>Enter Origin fit peaks (NETL excel sheet)</h2>
+    <label class="tog"><input type="checkbox" id="two"> Two peaks (graphitic + turbostratic)</label>
+    <div class="peakrow">
+      <label>Graphitic</label>
+      <input id="xc1" type="number" step="0.0001" placeholder="xc (2θ °)">
+      <input id="a1"  type="number" step="0.0001" placeholder="area (A)">
+    </div>
+    <div class="peakrow" id="row2" style="display:none">
+      <label>Turbostratic</label>
+      <input id="xc2" type="number" step="0.0001" placeholder="xc (2θ °)">
+      <input id="a2"  type="number" step="0.0001" placeholder="area (A)">
+    </div>
+    <div class="hint">λ fixed at Cu Kα 1.54187 Å. Graphitic = higher 2θ peak.
+      One peak → DG from its d-spacing; two → area-weighted (Maire-Mering).</div>
+    <button id="calc">Calculate DG%</button>
+  </div>
+  <div class="card">
+    <h2>Result</h2>
+    <div id="out"><div class="placeholder">Enter peak values and calculate.</div></div>
+  </div>
+</main>
+<div id="status">Ready.</div>
+<script>
+const two=document.getElementById('two'), row2=document.getElementById('row2');
+const statusEl=document.getElementById('status'), out=document.getElementById('out');
+two.addEventListener('change',()=>{ row2.style.display = two.checked ? 'flex' : 'none'; });
+function setStatus(m,e=false){ statusEl.textContent=m; statusEl.className=e?'error':''; }
+function row(l,v,u=''){ return `<div class="row"><span>${l}</span><span class="val">${v}${u?' '+u:''}</span></div>`; }
+document.getElementById('calc').addEventListener('click', async ()=>{
+  const peaks=[{xc:parseFloat(document.getElementById('xc1').value),
+                area:parseFloat(document.getElementById('a1').value)}];
+  if(two.checked) peaks.push({xc:parseFloat(document.getElementById('xc2').value),
+                              area:parseFloat(document.getElementById('a2').value)});
+  for(const p of peaks){ if(!isFinite(p.xc)||!isFinite(p.area)){ setStatus('Enter numeric xc and area for each peak.',true); return; } }
+  setStatus('Calculating…');
+  try{
+    const r=await fetch('/calc_peaks',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({peaks})});
+    const d=await r.json();
+    if(!r.ok||d.error){ setStatus('Error: '+(d.error||r.statusText),true); return; }
+    let h=`<div class="section">${d.method_name}</div>`+
+      row('λ', d.wavelength_angstrom.toFixed(5),'Å')+
+      `<div class="section">Graphitic</div>`+
+      row('xc', d.graphitic.xc.toFixed(4),'°')+row('area', d.graphitic.A.toFixed(4))+
+      row('d-spacing', d.graphitic.d_spacing_angstrom.toFixed(6),'Å');
+    if(d.n_peaks===2){
+      h+=`<div class="section">Turbostratic</div>`+
+         row('xc', d.turbostratic.xc.toFixed(4),'°')+row('area', d.turbostratic.A.toFixed(4))+
+         row('d-spacing', d.turbostratic.d_spacing_angstrom.toFixed(6),'Å')+
+         `<div class="section">Weighted</div>`+
+         row('X_g / X_t',(d.area_fraction_graphitic*100).toFixed(2)+'% / '+(d.area_fraction_turbostratic*100).toFixed(2)+'%')+
+         row("d′", d.d_spacing_weighted_angstrom.toFixed(6),'Å');
+    }
+    h+=`<div class="dgbox"><div class="cap">Degree of Graphitization</div>`+
+       `<div class="dg">${d.DG_percent.toFixed(2)} %</div>`+
+       `<div class="cap">${d.n_peaks===1?'single peak':'area-weighted'} · Maire-Mering</div></div>`;
+    out.innerHTML=h; setStatus('Done.');
+  }catch(err){ setStatus('Request failed: '+err,true); }
+});
+</script>
+</body>
+</html>
+"""
+
+
 # ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
@@ -727,10 +851,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.rstrip("/")
-        if path.endswith(("/analyze", "/batch_analyze", "/chart")):
+        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/calc_peaks")):
             self._send(405, "text/plain; charset=utf-8", b"Use POST for this endpoint")
         elif "dashboard" in path:
             self._send(200, "text/html; charset=utf-8", DASHBOARD_HTML.encode("utf-8"))
+        elif "manual" in path:
+            self._send(200, "text/html; charset=utf-8", MANUAL_HTML.encode("utf-8"))
         else:
             self._send(200, "text/html; charset=utf-8", INDEX_HTML.encode("utf-8"))
 
@@ -752,6 +878,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_batch()
             elif path.endswith("/chart"):
                 self._handle_chart()
+            elif path.endswith("/calc_peaks"):
+                self._handle_calc_peaks()
             else:
                 self._handle_analyze()
         except ValueError as exc:
@@ -777,6 +905,11 @@ class Handler(BaseHTTPRequestHandler):
                 res = {"method": method, "error": str(exc)}
             out[method] = res
         self._send(200, "application/json", json.dumps(out).encode("utf-8"))
+
+    def _handle_calc_peaks(self) -> None:
+        payload = self._read_json()
+        result = dg_from_peaks(payload.get("peaks", []))   # ValueError → 400
+        self._send(200, "application/json", json.dumps(result).encode("utf-8"))
 
     def _handle_batch(self) -> None:
         payload = self._read_json()

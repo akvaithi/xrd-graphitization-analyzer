@@ -41,6 +41,20 @@ python3 xrd_analyzer.py data_dir/ --method A --json
 methodology, calculations, and fitted parameters (`mu`, `w`, `xc`, `A`), and
 suppresses all other output.
 
+**Single-peak-first (NETL procedure):** Method B fits one peak first and, if its
+R² clears `XRD_SINGLE_FIT_R2` (default 0.997), recommends the single-peak DG
+(well-graphitized samples); otherwise it recommends the two-peak DG. The result
+carries `single_peak_r2`, `dual_peak_r2`, `fit_recommendation`, and
+`DG_recommended_percent`.
+
+**Manual peak entry** (the NETL "prompt excel sheet") — compute DG directly from
+Origin fit values, no file/fit:
+
+```bash
+python3 xrd_analyzer.py --peaks 26.51:20.571,26.181:8.062   # two peaks → 76.7%
+python3 xrd_analyzer.py --peaks 26.506:329.83               # one peak  → 89.8%
+```
+
 ## Web GUI
 
 ```bash
@@ -48,9 +62,15 @@ python3 xrd_webgui.py            # serves http://127.0.0.1:8000
 python3 xrd_webgui.py --port 8642
 ```
 
-Choose one or more `.xy` files and click **Analyze**. **Both
-methods are computed**; the dropdown switches which method's results + plot are
-shown, and multiple files are paged. The server honours `$PORT`/`$HOST` (binds
+Three pages (linked in the header):
+- **Analyzer** — upload `.xy` file(s); **both methods are computed**; the dropdown
+  switches method, multiple files are paged. Method B shows the NETL
+  single-peak-first recommendation.
+- **Run Dashboard** — multi-file parameter extraction, table, comparison charts, CSV.
+- **Manual Calc** — enter 1 or 2 Origin peaks (`xc` + `area`) and get DG exactly
+  like the NETL excel sheet.
+
+Choose one or more `.xy` files and click **Analyze**. The server honours `$PORT`/`$HOST` (binds
 `0.0.0.0` when `$PORT` is set), so it runs unchanged on container hosts.
 
 ### Run Dashboard
