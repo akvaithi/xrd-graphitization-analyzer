@@ -58,27 +58,41 @@ _work_sem = threading.BoundedSemaphore(MAX_CONCURRENT)
 
 
 # ---------------------------------------------------------------------------
-# Plot colours (dark theme)
+# Plot colours
 # ---------------------------------------------------------------------------
 PANEL     = "#2a2a3e"
-RED_PEAK  = "#f7768e"
-BLUE_PEAK = "#7dcfff"
-FIT_COL   = "#bb9af7"
-SINGLE_COL = "#e0af68"
+RED_PEAK  = "#e64980"   # graphitic (works on light + dark)
+BLUE_PEAK = "#1098ad"   # turbostratic
+FIT_COL   = "#7048e8"   # total fit
 RAW_COL   = "#a9b1d6"
 MUTED     = "#565f89"
 TEXT      = "#c0caf5"
+
+
+def _plot_theme(theme: str) -> dict:
+    """Colour palette for plots, matched to the page light/dark theme."""
+    if theme == "light":
+        return {"face": "#ffffff", "axes": "#ffffff", "text": "#1a1b26",
+                "muted": "#5b6170", "grid": "#e6e8ee", "raw": "#495057"}
+    return {"face": PANEL, "axes": "#101018", "text": TEXT,
+            "muted": MUTED, "grid": "#22223a", "raw": RAW_COL}
+
+
+# Plot font sizes (points). Chosen so the rendered text, after the browser
+# scales the PNG into its card, visually matches the ~13px UI text.
+FS_TITLE, FS_LABEL, FS_TICK, FS_LEGEND = 16, 14, 12.5, 12
 
 
 # ---------------------------------------------------------------------------
 # Plot rendering — one PNG per method
 # ---------------------------------------------------------------------------
 
-def render_plot(pattern: XRDPattern, res: dict) -> str:
+def render_plot(pattern: XRDPattern, res: dict, theme: str = "dark") -> str:
     """Render the fit (high-res, with raw points) to a base64 PNG data-URI."""
-    fig = Figure(figsize=(7.6, 5.4), dpi=300, facecolor=PANEL)
+    pal = _plot_theme(theme)
+    fig = Figure(figsize=(6.8, 4.8), dpi=220, facecolor=pal["face"])
     ax = fig.add_subplot(111)
-    ax.set_facecolor("#12121e")
+    ax.set_facecolor(pal["axes"])
 
     g, t = res["graphitic"], res["turbostratic"]
     x, y, _bl = pattern.baseline_subtracted(*ANALYSIS_WINDOW)
@@ -87,28 +101,29 @@ def render_plot(pattern: XRDPattern, res: dict) -> str:
     yt = pseudo_voigt(xp, t["A"], t["xc"], t["w"], t["mu"])   # mu=1 (Lorentzian)
     ytot = yg + yt
     # raw data points — open circles so the fit line stays visible underneath
-    ax.scatter(x, y, s=26, facecolors="none", edgecolors=RAW_COL, linewidths=0.9,
+    ax.scatter(x, y, s=30, facecolors="none", edgecolors=pal["raw"], linewidths=1.0,
                alpha=0.95, label="Raw data (baseline-subtracted)", zorder=6)
     ax.fill_between(xp, yg, alpha=0.22, color=RED_PEAK)
-    ax.plot(xp, yg, color=RED_PEAK, lw=1.6, label=f"Graphitic 2θ={g['xc']:.3f}°")
+    ax.plot(xp, yg, color=RED_PEAK, lw=1.8, label=f"Graphitic 2θ={g['xc']:.3f}°")
     ax.fill_between(xp, yt, alpha=0.16, color=BLUE_PEAK)
-    ax.plot(xp, yt, color=BLUE_PEAK, lw=1.6,
+    ax.plot(xp, yt, color=BLUE_PEAK, lw=1.8,
             label=f"Turbostratic 2θ={t['xc']:.3f}° (Lorentzian)")
-    ax.plot(xp, ytot, color=FIT_COL, lw=2.2, ls="--", label="Total fit", zorder=5)
-    title = f"Carbon (002) fit — DG {res['DG_percent']:.1f}%"
+    ax.plot(xp, ytot, color=FIT_COL, lw=2.4, ls="--", label="Total fit", zorder=5)
 
-    ax.tick_params(colors=MUTED, labelsize=9)
+    ax.tick_params(colors=pal["muted"], labelsize=FS_TICK)
     for spine in ax.spines.values():
-        spine.set_edgecolor(MUTED)
-    ax.grid(True, color="#23233a", lw=0.5)
-    ax.set_xlabel("2θ  (degrees)", color=MUTED, fontsize=10)
-    ax.set_ylabel("Intensity  (a.u.)", color=MUTED, fontsize=10)
-    ax.set_title(title, color=TEXT, fontsize=10.5, pad=8)
-    ax.legend(fontsize=8.5, facecolor=PANEL, edgecolor=MUTED, labelcolor=TEXT, framealpha=0.9)
-    fig.tight_layout(pad=1.4)
+        spine.set_edgecolor(pal["muted"])
+    ax.grid(True, color=pal["grid"], lw=0.6)
+    ax.set_xlabel("2θ  (degrees)", color=pal["muted"], fontsize=FS_LABEL)
+    ax.set_ylabel("Intensity  (a.u.)", color=pal["muted"], fontsize=FS_LABEL)
+    ax.set_title(f"Carbon (002) fit — DG {res['DG_percent']:.1f}%",
+                 color=pal["text"], fontsize=FS_TITLE, pad=8)
+    ax.legend(fontsize=FS_LEGEND, facecolor=pal["face"], edgecolor=pal["muted"],
+              labelcolor=pal["text"], framealpha=0.9)
+    fig.tight_layout(pad=1.3)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor=PANEL, dpi=300)
+    fig.savefig(buf, format="png", facecolor=pal["face"], dpi=220)
     buf.seek(0)
     return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
 
@@ -167,7 +182,8 @@ def build_dashboard_rows(files: list[dict]) -> list[dict]:
     return rows
 
 
-def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str) -> str:
+def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str,
+                           theme: str = "dark") -> str:
     """Scatter/line chart of metric ``y`` vs parameter ``x``, grouped by ``group``."""
     if x not in X_LABELS:
         x = "temperature_C"
@@ -176,9 +192,10 @@ def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str) -> str:
     if group not in GROUP_LABELS:
         group = "carbon_type"
 
-    fig = Figure(figsize=(6.6, 4.6), dpi=200, facecolor=PANEL)
+    pal = _plot_theme(theme)
+    fig = Figure(figsize=(6.6, 4.6), dpi=200, facecolor=pal["face"])
     ax = fig.add_subplot(111)
-    ax.set_facecolor("#12121e")
+    ax.set_facecolor(pal["axes"])
 
     # bucket points by group value
     series: dict[str, list[tuple]] = {}
@@ -191,7 +208,7 @@ def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str) -> str:
 
     if not series:
         ax.text(0.5, 0.5, "No data for this combination", transform=ax.transAxes,
-                ha="center", va="center", color=MUTED, fontsize=11)
+                ha="center", va="center", color=pal["muted"], fontsize=FS_LABEL)
     else:
         for i, (gv, pts) in enumerate(sorted(series.items())):
             xs = [p[0] for p in pts]
@@ -205,25 +222,26 @@ def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str) -> str:
             mx = sorted(buckets)
             if len(mx) > 1:
                 my = [sum(buckets[v]) / len(buckets[v]) for v in mx]
-                ax.plot(mx, my, "-", color=color, lw=1.3, alpha=0.45, zorder=2)
-            ax.scatter(xs, ys, s=46, color=color, edgecolor="#12121e",
-                       linewidth=0.6, zorder=3,
+                ax.plot(mx, my, "-", color=color, lw=1.5, alpha=0.45, zorder=2)
+            ax.scatter(xs, ys, s=58, color=color, edgecolor=pal["axes"],
+                       linewidth=0.7, zorder=3,
                        label=(gv if group != "none" else None))
         if group != "none":
-            ax.legend(title=GROUP_LABELS[group], fontsize=8, title_fontsize=8.5,
-                      facecolor=PANEL, edgecolor=MUTED, labelcolor=TEXT, framealpha=0.9)
+            ax.legend(title=GROUP_LABELS[group], fontsize=FS_LEGEND, title_fontsize=FS_LEGEND,
+                      facecolor=pal["face"], edgecolor=pal["muted"],
+                      labelcolor=pal["text"], framealpha=0.9)
 
-    ax.tick_params(colors=MUTED, labelsize=8)
+    ax.tick_params(colors=pal["muted"], labelsize=FS_TICK)
     for spine in ax.spines.values():
-        spine.set_edgecolor(MUTED)
-    ax.grid(True, color="#23233a", lw=0.6)
-    ax.set_xlabel(X_LABELS[x], color=MUTED, fontsize=9)
-    ax.set_ylabel(Y_LABELS[y], color=MUTED, fontsize=9)
-    ax.set_title(f"{Y_LABELS[y]}  vs  {X_LABELS[x]}", color=TEXT, fontsize=9.5, pad=8)
+        spine.set_edgecolor(pal["muted"])
+    ax.grid(True, color=pal["grid"], lw=0.6)
+    ax.set_xlabel(X_LABELS[x], color=pal["muted"], fontsize=FS_LABEL)
+    ax.set_ylabel(Y_LABELS[y], color=pal["muted"], fontsize=FS_LABEL)
+    ax.set_title(f"{Y_LABELS[y]}  vs  {X_LABELS[x]}", color=pal["text"], fontsize=FS_TITLE, pad=8)
     fig.tight_layout(pad=1.4)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor=PANEL, dpi=200)
+    fig.savefig(buf, format="png", facecolor=pal["face"], dpi=200)
     buf.seek(0)
     return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
 
@@ -242,12 +260,18 @@ INDEX_HTML = """<!DOCTYPE html>
   :root {
     --bg:#1e1e2e; --panel:#2a2a3e; --accent:#7aa2f7; --green:#9ece6a;
     --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296;
+    --inset:#12121e; --line:#23233a; --dgbg:#2d2038;
+  }
+  :root[data-theme="light"] {
+    --bg:#eef0f5; --panel:#ffffff; --accent:#3b5bdb; --green:#2f9e44;
+    --amber:#e8590c; --text:#1a1b26; --muted:#5b6170; --btn:#dbe4ff; --btnact:#bac8ff;
+    --inset:#f1f3f8; --line:#e6e8ee; --dgbg:#f3effb;
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font-family:-apple-system,Helvetica,Arial,sans-serif; }
   header { background:var(--panel); padding:14px 22px; display:flex;
-           align-items:center; gap:14px; flex-wrap:wrap; border-bottom:1px solid #12121e; }
+           align-items:center; gap:14px; flex-wrap:wrap; border-bottom:1px solid var(--inset); }
   header h1 { font-size:18px; color:var(--accent); margin:0; }
   .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   button, .filebtn {
@@ -274,26 +298,39 @@ INDEX_HTML = """<!DOCTYPE html>
   .row .lbl { color:var(--text); }
   .row .val { color:var(--green); font-family:monospace; font-weight:600; }
   .row .unit { color:var(--muted); font-size:11px; margin-left:4px; }
-  .dgbox { margin-top:20px; background:#2d2038; border-radius:10px; padding:18px; text-align:center; }
+  .dgbox { margin-top:20px; background:var(--dgbg); border-radius:10px; padding:18px; text-align:center; }
   .dgbox .cap { color:var(--muted); font-size:12px; }
   .dgbox .dg { color:var(--amber); font-size:38px; font-weight:700; margin:6px 0; }
   #plot { width:100%; border-radius:8px; display:block; }
   #plotwrap { display:flex; align-items:center; justify-content:center; min-height:360px; color:var(--muted); }
-  #status { padding:8px 22px; background:#12121e; color:var(--muted); font-size:12px; }
+  #status { padding:8px 22px; background:var(--inset); color:var(--muted); font-size:12px; }
   #status.error { color:#f7768e; }
   .placeholder { color:var(--muted); text-align:center; }
   #pager { display:none; align-items:center; gap:10px; padding:8px 22px;
-           background:var(--panel); border-bottom:1px solid #12121e; font-size:13px; }
+           background:var(--panel); border-bottom:1px solid var(--inset); font-size:13px; }
   #pager button { padding:6px 12px; }
   #pager button:disabled { opacity:.4; cursor:not-allowed; }
   #pagerInfo { color:var(--muted); }
   #fileSel { max-width:420px; }
   #fileSel option.err { color:#f7768e; }
+  .themebtn { background:var(--btn); color:var(--text); border:none; border-radius:6px;
+              padding:6px 11px; font-size:13px; cursor:pointer; }
+  .themebtn:hover { background:var(--btnact); }
 </style>
+<script>
+(function(){var d=document.documentElement;
+  d.dataset.theme=localStorage.getItem('xrd-theme')||'dark';
+  addEventListener('DOMContentLoaded',function(){var b=document.getElementById('themeBtn');
+    if(b)b.onclick=function(){var n=d.dataset.theme==='dark'?'light':'dark';
+      d.dataset.theme=n;localStorage.setItem('xrd-theme',n);b.textContent=n==='dark'?'◐ Light':'◑ Dark';
+      if(window.onThemeChange)window.onThemeChange(n);};
+    if(b)b.textContent=d.dataset.theme==='dark'?'◐ Light':'◑ Dark';});})();
+</script>
 </head>
 <body>
 <header>
   <h1>XRD Graphitization Analyzer</h1>
+  <button id="themeBtn" class="themebtn"></button>
   <a class="navlink" href="/dashboard">Run Dashboard →</a>
   <a class="navlink" href="/manual">Manual Calc →</a>
   <div class="controls">
@@ -339,6 +376,8 @@ const pagerInfo = document.getElementById('pagerInfo');
 let xyFiles = [];   // [{name, text}]
 let batch   = [];   // [{name, data}|{name, error}]  one result per file
 let current = 0;
+const theme = () => document.documentElement.dataset.theme || 'dark';
+window.onThemeChange = () => { if (batch.length) runAnalysis(); };  // re-render plots
 
 function setStatus(msg, isError=false){ statusEl.textContent = msg; statusEl.className = isError?'error':''; }
 function readText(f){ return new Promise((res,rej)=>{ const r=new FileReader();
@@ -363,7 +402,7 @@ async function analyzeOne(file){
   try {
     const resp = await fetch('/analyze', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({xy:file.text}),
+      body: JSON.stringify({xy:file.text, theme:theme()}),
     });
     const data = await resp.json();
     if (!resp.ok || data.error) return {name:file.name, error:(data.error||resp.statusText)};
@@ -452,12 +491,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <title>XRD Run Dashboard</title>
 <style>
   :root { --bg:#1e1e2e; --panel:#2a2a3e; --accent:#7aa2f7; --green:#9ece6a;
-          --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296; }
+          --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296;
+          --inset:#12121e; --line:#23233a; --dgbg:#2d2038; }
+  :root[data-theme="light"] { --bg:#eef0f5; --panel:#ffffff; --accent:#3b5bdb; --green:#2f9e44;
+          --amber:#e8590c; --text:#1a1b26; --muted:#5b6170; --btn:#dbe4ff; --btnact:#bac8ff;
+          --inset:#f1f3f8; --line:#e6e8ee; --dgbg:#f3effb; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font-family:-apple-system,Helvetica,Arial,sans-serif; }
   header { background:var(--panel); padding:14px 22px; display:flex; align-items:center;
-           gap:14px; flex-wrap:wrap; border-bottom:1px solid #12121e; }
+           gap:14px; flex-wrap:wrap; border-bottom:1px solid var(--inset); }
   header h1 { font-size:18px; color:var(--accent); margin:0; }
   .navlink { color:var(--amber); text-decoration:none; font-size:13px; font-weight:600;
              padding:6px 12px; border:1px solid var(--amber); border-radius:6px; }
@@ -475,26 +518,39 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .card { background:var(--panel); border-radius:10px; padding:16px; overflow:auto; }
   .card h2 { font-size:14px; color:var(--accent); margin:0 0 10px; }
   table { border-collapse:collapse; width:100%; font-size:12px; }
-  th, td { padding:5px 8px; text-align:right; border-bottom:1px solid #23233a; white-space:nowrap; }
+  th, td { padding:5px 8px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
   th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); }
   td.lbl, th.lbl { text-align:left; max-width:240px; overflow:hidden; text-overflow:ellipsis; }
   td.miss { color:var(--muted); }
   tr.err td { color:#f7768e; }
   .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
-  .chip { background:#12121e; color:var(--text); border-radius:12px; padding:3px 10px; font-size:11px; }
+  .chip { background:var(--inset); color:var(--text); border-radius:12px; padding:3px 10px; font-size:11px; }
   .ctrls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
   .ctrls label { color:var(--muted); font-size:12px; }
   .tablecard { grid-column:1 / -1; }
   .mini { font-size:11px; padding:4px 10px; margin-left:10px; vertical-align:middle; }
   .chartimg { width:100%; border-radius:8px; display:block; }
-  #status { padding:8px 22px; background:#12121e; color:var(--muted); font-size:12px; }
+  #status { padding:8px 22px; background:var(--inset); color:var(--muted); font-size:12px; }
   #status.error { color:#f7768e; }
   .placeholder { color:var(--muted); text-align:center; padding:40px 0; }
+  .themebtn { background:var(--btn); color:var(--text); border:none; border-radius:6px;
+              padding:6px 11px; font-size:13px; cursor:pointer; }
+  .themebtn:hover { background:var(--btnact); }
 </style>
+<script>
+(function(){var d=document.documentElement;
+  d.dataset.theme=localStorage.getItem('xrd-theme')||'dark';
+  addEventListener('DOMContentLoaded',function(){var b=document.getElementById('themeBtn');
+    if(b)b.onclick=function(){var n=d.dataset.theme==='dark'?'light':'dark';
+      d.dataset.theme=n;localStorage.setItem('xrd-theme',n);b.textContent=n==='dark'?'◐ Light':'◑ Dark';
+      if(window.onThemeChange)window.onThemeChange(n);};
+    if(b)b.textContent=d.dataset.theme==='dark'?'◐ Light':'◑ Dark';});})();
+</script>
 </head>
 <body>
 <header>
   <h1>XRD Run Dashboard</h1>
+  <button id="themeBtn" class="themebtn"></button>
   <a class="navlink" href="/">← Analyzer</a>
   <label class="filebtn">Choose .xy files…
     <input id="files" type="file" accept=".xy,.txt,.dat,text/plain" multiple style="display:none">
@@ -551,6 +607,8 @@ const panels={
        g:document.getElementById('gSel2'), wrap:document.getElementById('chartwrap2')},
 };
 let xy=[], rows=[];
+const theme = () => document.documentElement.dataset.theme || 'dark';
+window.onThemeChange = () => { if (rows.length){ drawChart('1'); drawChart('2'); } };
 
 function setStatus(m,e=false){ statusEl.textContent=m; statusEl.className=e?'error':''; }
 function opts(sel,map){ sel.innerHTML=Object.entries(map).map(([k,v])=>`<option value="${k}">${v}</option>`).join(''); }
@@ -617,7 +675,7 @@ async function drawChart(id){
   const p=panels[id];
   p.wrap.innerHTML='<div class="placeholder">Rendering…</div>';
   const resp=await fetch('/chart',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({rows, x:p.x.value, y:p.y.value, group:p.g.value})});
+    body:JSON.stringify({rows, x:p.x.value, y:p.y.value, group:p.g.value, theme:theme()})});
   const data=await resp.json();
   if(data.chart_png) p.wrap.innerHTML=`<img class="chartimg" src="${data.chart_png}" alt="chart">`;
   else p.wrap.innerHTML=`<div class="placeholder">${data.error||'no chart'}</div>`;
@@ -651,12 +709,16 @@ MANUAL_HTML = """<!DOCTYPE html>
 <title>XRD Manual DG Calculator</title>
 <style>
   :root { --bg:#1e1e2e; --panel:#2a2a3e; --accent:#7aa2f7; --green:#9ece6a;
-          --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296; }
+          --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296;
+          --inset:#12121e; --line:#23233a; --dgbg:#2d2038; }
+  :root[data-theme="light"] { --bg:#eef0f5; --panel:#ffffff; --accent:#3b5bdb; --green:#2f9e44;
+          --amber:#e8590c; --text:#1a1b26; --muted:#5b6170; --btn:#dbe4ff; --btnact:#bac8ff;
+          --inset:#f1f3f8; --line:#e6e8ee; --dgbg:#f3effb; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font-family:-apple-system,Helvetica,Arial,sans-serif; }
   header { background:var(--panel); padding:14px 22px; display:flex; align-items:center;
-           gap:14px; flex-wrap:wrap; border-bottom:1px solid #12121e; }
+           gap:14px; flex-wrap:wrap; border-bottom:1px solid var(--inset); }
   header h1 { font-size:18px; color:var(--accent); margin:0; }
   .navlink { color:var(--amber); text-decoration:none; font-size:13px; font-weight:600;
              padding:6px 12px; border:1px solid var(--amber); border-radius:6px; }
@@ -667,7 +729,7 @@ MANUAL_HTML = """<!DOCTYPE html>
   .card h2 { font-size:14px; color:var(--accent); margin:0 0 12px; }
   .peakrow { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
   .peakrow label { color:var(--muted); font-size:12px; width:78px; }
-  input[type=number] { background:#12121e; color:var(--text); border:1px solid var(--muted);
+  input[type=number] { background:var(--inset); color:var(--text); border:1px solid var(--muted);
         border-radius:6px; padding:7px 9px; font-size:13px; width:120px; }
   .hint { color:var(--muted); font-size:12px; margin:6px 0 14px; }
   button { background:var(--accent); color:var(--bg); font-weight:600; border:none;
@@ -678,17 +740,30 @@ MANUAL_HTML = """<!DOCTYPE html>
              border-bottom:1px solid var(--muted); padding-bottom:4px; }
   .row { display:flex; justify-content:space-between; padding:3px 0; font-size:13px; }
   .row .val { color:var(--green); font-family:monospace; font-weight:600; }
-  .dgbox { margin-top:18px; background:#2d2038; border-radius:10px; padding:18px; text-align:center; }
+  .dgbox { margin-top:18px; background:var(--dgbg); border-radius:10px; padding:18px; text-align:center; }
   .dgbox .dg { color:var(--amber); font-size:38px; font-weight:700; margin:6px 0; }
   .dgbox .cap { color:var(--muted); font-size:12px; }
-  #status { padding:8px 22px; background:#12121e; color:var(--muted); font-size:12px; }
+  #status { padding:8px 22px; background:var(--inset); color:var(--muted); font-size:12px; }
   #status.error { color:#f7768e; }
   .placeholder { color:var(--muted); text-align:center; padding:40px 0; }
+  .themebtn { background:var(--btn); color:var(--text); border:none; border-radius:6px;
+              padding:6px 11px; font-size:13px; cursor:pointer; }
+  .themebtn:hover { background:var(--btnact); }
 </style>
+<script>
+(function(){var d=document.documentElement;
+  d.dataset.theme=localStorage.getItem('xrd-theme')||'dark';
+  addEventListener('DOMContentLoaded',function(){var b=document.getElementById('themeBtn');
+    if(b)b.onclick=function(){var n=d.dataset.theme==='dark'?'light':'dark';
+      d.dataset.theme=n;localStorage.setItem('xrd-theme',n);b.textContent=n==='dark'?'◐ Light':'◑ Dark';
+      if(window.onThemeChange)window.onThemeChange(n);};
+    if(b)b.textContent=d.dataset.theme==='dark'?'◐ Light':'◑ Dark';});})();
+</script>
 </head>
 <body>
 <header>
   <h1>Manual DG Calculator</h1>
+  <button id="themeBtn" class="themebtn"></button>
   <a class="navlink" href="/">← Analyzer</a>
   <a class="navlink" href="/dashboard">Dashboard →</a>
 </header>
@@ -838,7 +913,7 @@ class Handler(BaseHTTPRequestHandler):
         pattern = XRDPattern.from_text(payload.get("xy", ""))
         try:
             res = GraphitizationAnalyzer(pattern).run()
-            res["plot_png"] = render_plot(pattern, res)
+            res["plot_png"] = render_plot(pattern, res, payload.get("theme", "dark"))
         except (FitError, ValueError) as exc:
             res = {"error": str(exc)}
         self._send(200, "application/json", json.dumps(res).encode("utf-8"))
@@ -863,7 +938,8 @@ class Handler(BaseHTTPRequestHandler):
         png = render_dashboard_chart(payload.get("rows", []),
                                      payload.get("x", "temperature_C"),
                                      payload.get("y", "DG"),
-                                     payload.get("group", "carbon_type"))
+                                     payload.get("group", "carbon_type"),
+                                     payload.get("theme", "dark"))
         self._send(200, "application/json", json.dumps({"chart_png": png}).encode("utf-8"))
 
 
