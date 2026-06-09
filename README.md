@@ -2,53 +2,41 @@
 
 Object-oriented tool that parses X-ray Diffraction `.xy` files of synthetic
 graphite and computes the **Degree of Graphitization (DG%)** of the carbon (002)
-reflection. Two selectable calculation methods, a CLI (single-file + batch), and
-a local/zero-Tk web GUI that computes both methods at once.
+reflection. **One standard automatic pipeline** (no options), a CLI (single-file
++ batch), and a local/zero-Tk web GUI.
 
-## Calculation methods (`--method`)
+## The standard pipeline
 
-- **Method A — NETL paper standard**
-  Bimodal Pseudo-Voigt deconvolution (graphitic + turbostratic), Bragg
-  d-spacings, area fractions, weighted `d′`, and the Maire–Mering equation.
+1. Linear baseline subtraction over the (002) window **24°–27.5°** (this isolates
+   the (002) complex and excludes extraneous-phase peaks, e.g. calcite ~29.4°).
+2. Fit a graphitic **Pseudo-Voigt** + a **pure-Lorentzian turbostratic** peak
+   (`μ = 1`, the NETL convention; turbostratic `xc ≤ 26.1°`, graphitic
+   `xc ∈ [26.3, 26.8]`).
+3. Bragg d-spacings, area fractions, area-weighted `d′`, and the **Maire–Mering**
+   DG%. Crystallite height **Lc = 0.89·λ / (B·cos(θ/2))** from the graphitic FWHM.
 
-- **Method B — OriginLab PsdVoigt1 (XRD ppt) + NETL**
-  1. Linear baseline subtraction over **24°–27.5°**.
-  2. Fits the exact OriginLab **PsdVoigt1** line shape with strict bounds
-     (`μ ∈ [0,1]`; turbostratic `xc ∈ [25.1, 26.3]`; graphitic `xc ∈ [26.3, 26.8]`).
-  3. Runs **both** a single-peak (legacy) and dual-peak (NETL) fit and reports the
-     legacy **DG% overestimation**.
-  4. Crystallite stacking height **Lc = 0.89·λ / (B·cos(θ/2))** from the
-     graphitic FWHM.
-
-X-ray wavelength is fixed to the Cu Kα standard **λ = 1.54187 Å** (NETL),
-defined once in `xrd_analyzer.DEFAULT_WAVELENGTH`. `OptimizeWarning` / fit
-failures (e.g. high amorphous content) are caught and reported cleanly.
+Validated against the NETL/postdoc OriginLab fits: mean abs error ≈ 1.3 DG% across
+the GPC/CPC sample set. X-ray wavelength is fixed to Cu Kα **λ = 1.54187 Å**.
+`OptimizeWarning` / fit failures are caught and reported cleanly.
 
 Dependencies: `numpy`, `scipy`, `matplotlib`.
 
 ## CLI
 
 ```bash
-python3 xrd_analyzer.py sample.xy --method A
-python3 xrd_analyzer.py sample.xy --method B --json
+python3 xrd_analyzer.py sample.xy
+python3 xrd_analyzer.py sample.xy --json
 
 # Batch (multiple files / a directory) → table, JSON array, or CSV
-python3 xrd_analyzer.py *.xy --method B --csv results.csv
-python3 xrd_analyzer.py data_dir/ --method A --json
+python3 xrd_analyzer.py *.xy --csv results.csv
+python3 xrd_analyzer.py data_dir/ --json
 ```
 
-`--json` emits a strict JSON object (one file) or array (batch) containing the
-methodology, calculations, and fitted parameters (`mu`, `w`, `xc`, `A`), and
-suppresses all other output.
-
-**Single-peak-first (NETL procedure):** Method B fits one peak first and, if its
-R² clears `XRD_SINGLE_FIT_R2` (default 0.997), recommends the single-peak DG
-(well-graphitized samples); otherwise it recommends the two-peak DG. The result
-carries `single_peak_r2`, `dual_peak_r2`, `fit_recommendation`, and
-`DG_recommended_percent`.
+`--json` emits a strict JSON object (one file) or array (batch) with the fitted
+parameters (`xc`, `w`, `mu`, `A`), d-spacings, `fit_r2`, Lc and DG%.
 
 **Manual peak entry** (the NETL "prompt excel sheet") — compute DG directly from
-Origin fit values, no file/fit:
+Origin fit values, no file/fit (use this to reproduce a specific hand-fit exactly):
 
 ```bash
 python3 xrd_analyzer.py --peaks 26.51:20.571,26.181:8.062   # two peaks → 76.7%
@@ -63,9 +51,9 @@ python3 xrd_webgui.py --port 8642
 ```
 
 Three pages (linked in the header):
-- **Analyzer** — upload `.xy` file(s); **both methods are computed**; the dropdown
-  switches method, multiple files are paged. Method B shows the NETL
-  single-peak-first recommendation.
+- **Analyzer** — upload `.xy` file(s); each is run through the standard pipeline
+  with a high-resolution fit plot (raw points + deconvolved peaks); multiple
+  files are paged.
 - **Run Dashboard** — multi-file parameter extraction, table, comparison charts, CSV.
 - **Manual Calc** — enter 1 or 2 Origin peaks (`xc` + `area`) and get DG exactly
   like the NETL excel sheet.

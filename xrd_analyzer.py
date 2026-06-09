@@ -42,16 +42,13 @@ SCHERRER_K: float = 0.89              # Scherrer shape factor for Lc
 # Analysis / baseline window for the (002) reflection
 ANALYSIS_WINDOW: tuple[float, float] = (24.0, 27.5)
 
-# Strict peak-centre bounds (Method B; also reused to keep Method A labelled)
-TURBO_XC_BOUNDS: tuple[float, float] = (25.1, 26.3)
+# Peak-centre bounds for the standard pipeline.
+#   graphitic : the sharp (002) peak, ~26.3–26.8°
+#   turbostratic : the broad disordered band, kept ≤ 26.1° (NETL places it in
+#                  the low-angle shoulder; capping here keeps it off the
+#                  graphitic peak and matches the reference fits).
 GRAPH_XC_BOUNDS: tuple[float, float] = (26.3, 26.8)
-
-# NETL "fit one peak first" rule: if the single-peak fit's R² clears this
-# threshold, the single-peak DG is recommended (well-graphitized sample);
-# otherwise a two-peak fit is needed. Env-overridable.
-SINGLE_FIT_R2_THRESHOLD: float = float(os.environ.get("XRD_SINGLE_FIT_R2", "0.997"))
-
-METHODS = ("A", "B")
+TURBO_XC_BOUNDS: tuple[float, float] = (25.1, 26.1)
 
 
 class FitError(Exception):
@@ -80,19 +77,13 @@ def pseudo_voigt(x: np.ndarray, A: float, xc: float, w: float, mu: float) -> np.
     return A * (mu * lorentzian + (1.0 - mu) * gaussian)
 
 
-def _single_model(x, A, xc, w, mu):
-    """Single PsdVoigt1 peak (baseline already removed)."""
-    return pseudo_voigt(x, A, xc, w, mu)
-
-
-def _dual_model(x, Ag, xcg, wg, mug, At, xct, wt, mut):
-    """Sum of graphitic + turbostratic PsdVoigt1 peaks (baseline removed)."""
-    return pseudo_voigt(x, Ag, xcg, wg, mug) + pseudo_voigt(x, At, xct, wt, mut)
-
-
-def _dual_model_baseline(x, Ag, xcg, wg, mug, At, xct, wt, mut, y0):
-    """Method A model: two peaks on a fitted flat baseline y0."""
-    return y0 + pseudo_voigt(x, Ag, xcg, wg, mug) + pseudo_voigt(x, At, xct, wt, mut)
+def _standard_model(x, Ag, xcg, wg, mug, At, xct, wt):
+    """
+    Standard pipeline model: a free graphitic Pseudo-Voigt plus a *pure
+    Lorentzian* turbostratic peak (mu = 1), per the NETL convention seen in
+    every reference fit. Seven free parameters (the turbostratic mu is fixed).
+    """
+    return pseudo_voigt(x, Ag, xcg, wg, mug) + pseudo_voigt(x, At, xct, wt, 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -233,65 +224,18 @@ class GraphitizationAnalyzer:
             "d_spacing_angstrom": round(float(d), 6),
         }
 
-    # -- dispatch ------------------------------------------------------------
+    # -- the one standard automatic pipeline --------------------------------
 
-    def run(self, method: str) -> dict:
-        if method == "A":
-            return self._run_a()
-        if method == "B":
-            return self._run_b()
-        if method == "both":
-            out: dict = {"method": "both", "wavelength_angstrom": round(self.wavelength, 6)}
-            for key, fn in (("A", self._run_a), ("B", self._run_b)):
-                try:
-                    out[key] = fn()
-                except (FitError, ValueError) as exc:
-                    out[key] = {"method": key, "error": str(exc)}
-            return out
-        raise ValueError(f"unknown method '{method}'; choose from {METHODS} or 'both'.")
+    def run(self) -> dict:
+        """
+        Standard automatic DG% pipeline (single method, no options):
 
-    # -- Method A: NETL paper standard --------------------------------------
-
-    def _run_a(self) -> dict:
-        x, y = self.pattern.window(*ANALYSIS_WINDOW)
-        if len(x) < 10:
-            raise FitError(
-                f"Only {len(x)} point(s) in the {ANALYSIS_WINDOW} window — too few to fit."
-            )
-        ph, base0 = float(y.max()), float(y.min())
-
-        # [Ag, xcg, wg, mug,  At, xct, wt, mut,  y0]   peak1=graphitic, peak2=turbostratic
-        p0 = [ph * 0.3, 26.5, 0.30, 0.5,  ph * 0.8, 25.8, 1.00, 0.8,  base0]
-        lower = [0.0, GRAPH_XC_BOUNDS[0], 0.02, 0.0,
-                 0.0, 24.5, 0.05, 0.0,  0.0]
-        upper = [np.inf, GRAPH_XC_BOUNDS[1], 3.0, 1.0,
-                 np.inf, GRAPH_XC_BOUNDS[0], 3.0, 1.0,  ph]
-        popt = self._fit(_dual_model_baseline, x, y, p0, (lower, upper),
-                         "Method A bimodal")
-        Ag, xcg, wg, mug, At, xct, wt, mut, y0 = popt
-
-        dg, dt = self.bragg_d(xcg), self.bragg_d(xct)
-        total = Ag + At
-        Xg, Xt = Ag / total, At / total
-        d_prime = Xg * dg + Xt * dt
-        DG = self.maire_mering(d_prime)
-
-        return {
-            "method": "A",
-            "method_name": "NETL paper standard — bimodal Pseudo-Voigt",
-            "wavelength_angstrom": round(self.wavelength, 6),
-            "baseline_y0": round(float(y0), 6),
-            "graphitic": self._peak(Ag, xcg, wg, mug, dg),
-            "turbostratic": self._peak(At, xct, wt, mut, dt),
-            "area_fraction_graphitic": round(Xg, 6),
-            "area_fraction_turbostratic": round(Xt, 6),
-            "d_spacing_weighted_angstrom": round(d_prime, 6),
-            "DG_percent": round(DG, 2),
-        }
-
-    # -- Method B: OriginLab PsdVoigt1 (single vs dual) ---------------------
-
-    def _run_b(self) -> dict:
+        1. Linear baseline subtraction over the (002) window (24°–27.5°).
+        2. Fit a graphitic Pseudo-Voigt + a **pure-Lorentzian** turbostratic
+           peak (mu = 1, the NETL convention), turbostratic centre ≤ 26.1°.
+        3. Area-weighted d′ and the Maire-Mering DG%; Scherrer Lc from the
+           graphitic peak.
+        """
         x, y, _baseline = self.pattern.baseline_subtracted(*ANALYSIS_WINDOW)
         if len(x) < 10:
             raise FitError(
@@ -299,64 +243,33 @@ class GraphitizationAnalyzer:
             )
         ph = float(y.max())
 
-        # --- Single-peak fit (NETL "one peak first"): one graphitic peak ---
-        p0_s = [ph * 1.0, 26.5, 0.5, 0.5]
-        lo_s = [0.0, GRAPH_XC_BOUNDS[0], 0.02, 0.0]
-        hi_s = [np.inf, GRAPH_XC_BOUNDS[1], 3.0, 1.0]
-        popt_s = self._fit(_single_model, x, y, p0_s, (lo_s, hi_s),
-                           "Method B single-peak")
-        As, xcs, ws, mus = popt_s
-        r2_single = self._r2(y, _single_model(x, *popt_s))
-        d_single = self.bragg_d(xcs)
-        DG_single = self.maire_mering(d_single)
-
-        # --- Dual-peak fit (NETL two-peak) with strict bounds --------------
-        p0_d = [ph * 0.5, 26.5, 0.30, 0.5,  ph * 0.5, 25.8, 1.00, 0.8]
-        lo_d = [0.0, GRAPH_XC_BOUNDS[0], 0.02, 0.0,
-                0.0, TURBO_XC_BOUNDS[0], 0.05, 0.0]
-        hi_d = [np.inf, GRAPH_XC_BOUNDS[1], 3.0, 1.0,
-                np.inf, TURBO_XC_BOUNDS[1], 3.0, 1.0]
-        popt_d = self._fit(_dual_model, x, y, p0_d, (lo_d, hi_d),
-                           "Method B dual-peak")
-        Ag, xcg, wg, mug, At, xct, wt, mut = popt_d
-        r2_dual = self._r2(y, _dual_model(x, *popt_d))
+        # params: [Ag, xcg, wg, mug,  At, xct, wt]   (turbostratic mu fixed = 1)
+        p0 = [ph * 0.6, 26.55, 0.15, 0.5,  ph * 0.4, 26.0, 0.9]
+        lo = [0.0, GRAPH_XC_BOUNDS[0], 0.02, 0.0,  0.0, TURBO_XC_BOUNDS[0], 0.05]
+        hi = [np.inf, GRAPH_XC_BOUNDS[1], 3.0, 1.0,  np.inf, TURBO_XC_BOUNDS[1], 3.0]
+        popt = self._fit(_standard_model, x, y, p0, (lo, hi), "standard fit")
+        Ag, xcg, wg, mug, At, xct, wt = popt
+        r2 = self._r2(y, _standard_model(x, *popt))
 
         dg, dt = self.bragg_d(xcg), self.bragg_d(xct)
         total = Ag + At
         Xg, Xt = Ag / total, At / total
         d_prime = Xg * dg + Xt * dt
-        DG_dual = self.maire_mering(d_prime)
+        DG = self.maire_mering(d_prime)
         Lc = self.scherrer_lc(xcg, wg)
 
-        # --- NETL "one-peak-first" recommendation --------------------------
-        if r2_single >= SINGLE_FIT_R2_THRESHOLD:
-            fit_rec, DG_rec = "single-peak", DG_single
-        else:
-            fit_rec, DG_rec = "dual-peak", DG_dual
-
         return {
-            "method": "B",
-            "method_name": "OriginLab PsdVoigt1 — single (legacy) vs dual (NETL)",
+            "method_name": "Standard (graphitic + pure-Lorentzian turbostratic)",
             "wavelength_angstrom": round(self.wavelength, 6),
             "baseline_region_deg": list(ANALYSIS_WINDOW),
-            # dual / NETL (primary)
             "graphitic": self._peak(Ag, xcg, wg, mug, dg),
-            "turbostratic": self._peak(At, xct, wt, mut, dt),
+            "turbostratic": self._peak(At, xct, wt, 1.0, dt),
             "area_fraction_graphitic": round(Xg, 6),
             "area_fraction_turbostratic": round(Xt, 6),
             "d_spacing_weighted_angstrom": round(d_prime, 6),
-            "DG_percent": round(DG_dual, 2),
-            # single / legacy
-            "single_peak": self._peak(As, xcs, ws, mus, d_single),
-            "DG_single_percent": round(DG_single, 2),
-            "dg_overestimation_percent": round(DG_single - DG_dual, 2),
-            # microstructure
             "crystallite_height_Lc_angstrom": round(float(Lc), 2),
-            # NETL one-peak-first procedure
-            "single_peak_r2": round(r2_single, 5),
-            "dual_peak_r2": round(r2_dual, 5),
-            "fit_recommendation": fit_rec,
-            "DG_recommended_percent": round(DG_rec, 2),
+            "fit_r2": round(r2, 5),
+            "DG_percent": round(DG, 2),
         }
 
 
@@ -364,16 +277,12 @@ class GraphitizationAnalyzer:
 # Convenience API
 # ---------------------------------------------------------------------------
 
-def analyze_text(text: str, method: str = "A",
-                 wavelength: float = DEFAULT_WAVELENGTH) -> dict:
-    analyzer = GraphitizationAnalyzer(XRDPattern.from_text(text), wavelength)
-    return analyzer.run(method)
+def analyze_text(text: str) -> dict:
+    return GraphitizationAnalyzer(XRDPattern.from_text(text)).run()
 
 
-def analyze_file(path: str | Path, method: str = "A",
-                 wavelength: float = DEFAULT_WAVELENGTH) -> dict:
-    analyzer = GraphitizationAnalyzer(XRDPattern.from_file(path), wavelength)
-    return analyzer.run(method)
+def analyze_file(path: str | Path) -> dict:
+    return GraphitizationAnalyzer(XRDPattern.from_file(path)).run()
 
 
 def dg_from_peaks(peaks: list[dict], wavelength: float = DEFAULT_WAVELENGTH) -> dict:
@@ -461,14 +370,13 @@ def expand_xy_inputs(paths: list[str]) -> list[str]:
     return files
 
 
-def analyze_batch(filepaths: list[str], method: str = "A",
-                  wavelength: float = DEFAULT_WAVELENGTH) -> list[dict]:
+def analyze_batch(filepaths: list[str]) -> list[dict]:
     """Analyse many files; each entry is results+``file`` or ``{file, error}``."""
     results: list[dict] = []
     for fp in filepaths:
         entry: dict = {"file": str(fp)}
         try:
-            entry.update(analyze_file(fp, method, wavelength))
+            entry.update(analyze_file(fp))
         except FileNotFoundError as exc:
             entry["error"] = f"file not found — '{exc.filename or fp}'"
         except (FitError, ValueError) as exc:
@@ -480,34 +388,30 @@ def analyze_batch(filepaths: list[str], method: str = "A",
 
 
 _CSV_COLUMNS = (
-    "file", "method", "wavelength_angstrom", "DG_percent",
-    "fit_recommendation", "DG_recommended_percent",
+    "file", "wavelength_angstrom", "DG_percent",
     "d_spacing_weighted_angstrom", "graphitic_xc", "graphitic_w",
-    "turbostratic_xc", "DG_single_percent", "single_peak_r2",
-    "dg_overestimation_percent", "crystallite_height_Lc_angstrom", "error",
+    "turbostratic_xc", "area_fraction_turbostratic",
+    "crystallite_height_Lc_angstrom", "fit_r2", "error",
 )
 
 
 def _csv_row(entry: dict) -> dict:
     """Flatten a (possibly nested) result entry into CSV columns."""
-    row = {"file": entry.get("file", ""), "method": entry.get("method", "")}
+    row = {"file": entry.get("file", "")}
     if "error" in entry:
         row["error"] = entry["error"]
         return row
     row["wavelength_angstrom"] = entry.get("wavelength_angstrom")
     row["DG_percent"] = entry.get("DG_percent")
-    row["fit_recommendation"] = entry.get("fit_recommendation")
-    row["DG_recommended_percent"] = entry.get("DG_recommended_percent")
     row["d_spacing_weighted_angstrom"] = entry.get("d_spacing_weighted_angstrom")
     g = entry.get("graphitic", {})
     t = entry.get("turbostratic", {})
     row["graphitic_xc"] = g.get("xc")
     row["graphitic_w"] = g.get("w")
     row["turbostratic_xc"] = t.get("xc")
-    row["DG_single_percent"] = entry.get("DG_single_percent")
-    row["single_peak_r2"] = entry.get("single_peak_r2")
-    row["dg_overestimation_percent"] = entry.get("dg_overestimation_percent")
+    row["area_fraction_turbostratic"] = entry.get("area_fraction_turbostratic")
     row["crystallite_height_Lc_angstrom"] = entry.get("crystallite_height_Lc_angstrom")
+    row["fit_r2"] = entry.get("fit_r2")
     return row
 
 
@@ -535,51 +439,29 @@ def _print_human(result: dict, filepath: str | Path) -> None:
     print(f"  λ    : {result['wavelength_angstrom']:.5f} Å")
     print(SEP)
 
-    if result["method"] == "manual":
-        print("\n  Manual peak entry (NETL excel-sheet calculation)")
+    if "n_peaks" in result:   # manual peak-entry result
         _mp = lambda lbl, p: print(f"    {lbl:<16}: xc={p['xc']:.4f}°  A={p['A']:.4f}  "
                                    f"d={p['d_spacing_angstrom']:.6f} Å")
+        print("\n  Manual peak entry (NETL excel-sheet calculation)")
         _mp("Graphitic", result["graphitic"])
         if result["n_peaks"] == 2:
             _mp("Turbostratic", result["turbostratic"])
             print(f"    X_g = {result['area_fraction_graphitic']:.4f}   "
                   f"X_t = {result['area_fraction_turbostratic']:.4f}   "
                   f"d′ = {result['d_spacing_weighted_angstrom']:.6f} Å")
-    elif result["method"] == "A":
-        print("\n  Fitted Peaks (Pseudo-Voigt)")
+    else:                      # standard auto-fit result
+        print("\n  Fitted peaks  (graphitic + pure-Lorentzian turbostratic)")
         _print_peak("Graphitic", result["graphitic"])
         _print_peak("Turbostratic", result["turbostratic"])
-        print(f"    baseline y0         : {result['baseline_y0']:.6f}")
-        print("\n  Area Fractions / d-spacing")
-        print(f"    X_g = {result['area_fraction_graphitic']:.4f}   "
-              f"X_t = {result['area_fraction_turbostratic']:.4f}")
-        print(f"    d′ (weighted)       : {result['d_spacing_weighted_angstrom']:.6f} Å")
-    else:  # B
-        rec = result["fit_recommendation"]
-        print(f"\n  NETL one-peak-first: single R²={result['single_peak_r2']:.5f}  "
-              f"dual R²={result['dual_peak_r2']:.5f}")
-        print(f"  → recommended fit: {rec.upper()}  "
-              f"(DG = {result['DG_recommended_percent']:.2f} %)")
-        print("\n  Dual-Peak fit (NETL)")
-        _print_peak("Graphitic", result["graphitic"])
-        _print_peak("Turbostratic", result["turbostratic"])
-        print(f"    X_g = {result['area_fraction_graphitic']:.4f}   "
+        print(f"\n  X_g = {result['area_fraction_graphitic']:.4f}   "
               f"X_t = {result['area_fraction_turbostratic']:.4f}   "
               f"d′ = {result['d_spacing_weighted_angstrom']:.6f} Å")
-        print("\n  Single-Peak fit (Legacy)")
-        _print_peak("Graphitic", result["single_peak"])
-        print(f"\n  DG% single = {result['DG_single_percent']:.2f} %   "
-              f"DG% dual = {result['DG_percent']:.2f} %   "
-              f"(overestimation {result['dg_overestimation_percent']:.2f})")
-        print(f"  Crystallite height Lc : {result['crystallite_height_Lc_angstrom']:.2f} Å")
+        print(f"  Crystallite height Lc : {result['crystallite_height_Lc_angstrom']:.2f} Å"
+              f"   (fit R² = {result['fit_r2']:.5f})")
 
     print()
     print(SEP)
-    if result["method"] == "B":
-        print(f"  DG% (NETL recommended, {result['fit_recommendation']}) = "
-              f"{result['DG_recommended_percent']:>7.2f} %")
-    else:
-        print(f"  Degree of Graphitization  DG% = {result['DG_percent']:>7.2f} %")
+    print(f"  Degree of Graphitization  DG% = {result['DG_percent']:>7.2f} %")
     print(SEP)
 
 
@@ -588,19 +470,19 @@ def _print_batch_table(results: list[dict]) -> None:
     print(SEP)
     print("  XRD Degree of Graphitization — Batch Summary")
     print(SEP)
-    print(f"  {'File':<44}{'Method':<8}{'DG%':>9}")
+    print(f"  {'File':<50}{'DG%':>9}")
     print("  " + "-" * 68)
     ok = 0
     for r in results:
         name = Path(r["file"]).name
-        if len(name) > 42:
-            name = name[:39] + "..."
+        if len(name) > 48:
+            name = name[:45] + "..."
         if "error" in r:
-            print(f"  {name:<44}{'—':<8}{'ERROR':>9}")
+            print(f"  {name:<50}{'ERROR':>9}")
             print(f"      ↳ {r['error']}")
         else:
             ok += 1
-            print(f"  {name:<44}{r['method']:<8}{r['DG_percent']:>9.2f}")
+            print(f"  {name:<50}{r['DG_percent']:>9.2f}")
     print("  " + "-" * 68)
     print(f"  {ok}/{len(results)} file(s) analyzed successfully.")
     print(SEP)
@@ -613,17 +495,14 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python xrd_analyzer.py sample.xy --method A\n"
-            "  python xrd_analyzer.py sample.xy --method B --json\n"
-            "  python xrd_analyzer.py *.xy --method B --csv results.csv\n"
+            "  python xrd_analyzer.py sample.xy\n"
+            "  python xrd_analyzer.py sample.xy --json\n"
+            "  python xrd_analyzer.py *.xy --csv results.csv\n"
             "  python xrd_analyzer.py --peaks 26.51:20.571,26.181:8.062\n"
         ),
     )
     parser.add_argument("filepaths", nargs="*", metavar="FILE_OR_DIR",
                         help="One or more .xy files and/or directories (expanded to *.xy).")
-    parser.add_argument("--method", choices=METHODS, default="A",
-                        help="A = NETL paper standard (default); "
-                             "B = OriginLab PsdVoigt1 single-vs-dual + Lc.")
     parser.add_argument("--peaks", default=None, metavar="xc:area,...",
                         help="Manual peak entry (no file/fit): 1 or 2 comma-separated "
                              "'xc:area' pairs from an Origin fit, e.g. "
@@ -677,7 +556,7 @@ def main() -> None:
     if len(files) == 1 and not args.csv_path:
         fp = files[0]
         try:
-            result = analyze_file(fp, args.method)
+            result = analyze_file(fp)
         except FileNotFoundError as exc:
             _fail(f"file not found — '{exc.filename or fp}'", args.json_output)
         except (FitError, ValueError) as exc:
@@ -692,7 +571,7 @@ def main() -> None:
         return
 
     # ---- batch mode ----
-    results = analyze_batch(files, args.method)
+    results = analyze_batch(files)
     if args.csv_path:
         if args.csv_path == "-":
             write_batch_csv(results, sys.stdout)
