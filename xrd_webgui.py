@@ -78,9 +78,10 @@ def _plot_theme(theme: str) -> dict:
             "muted": MUTED, "grid": "#22223a", "raw": RAW_COL}
 
 
-# Plot font sizes (points). Chosen so the rendered text, after the browser
-# scales the PNG into its card, visually matches the ~13px UI text.
-FS_TITLE, FS_LABEL, FS_TICK, FS_LEGEND = 16, 14, 12.5, 12
+# Plot font sizes (points). Small points + a large figure → when the browser
+# scales the PNG into its card the text lands near the ~13px UI text, while the
+# big figure keeps the plot area large and high-resolution.
+FS_TITLE, FS_LABEL, FS_TICK, FS_LEGEND = 12, 11, 10, 10
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +91,7 @@ FS_TITLE, FS_LABEL, FS_TICK, FS_LEGEND = 16, 14, 12.5, 12
 def render_plot(pattern: XRDPattern, res: dict, theme: str = "dark") -> str:
     """Render the fit (high-res, with raw points) to a base64 PNG data-URI."""
     pal = _plot_theme(theme)
-    fig = Figure(figsize=(6.8, 4.8), dpi=220, facecolor=pal["face"])
+    fig = Figure(figsize=(9.0, 5.6), dpi=240, facecolor=pal["face"])
     ax = fig.add_subplot(111)
     ax.set_facecolor(pal["axes"])
 
@@ -123,7 +124,7 @@ def render_plot(pattern: XRDPattern, res: dict, theme: str = "dark") -> str:
     fig.tight_layout(pad=1.3)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor=pal["face"], dpi=220)
+    fig.savefig(buf, format="png", facecolor=pal["face"], dpi=240)
     buf.seek(0)
     return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
 
@@ -193,7 +194,7 @@ def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str,
         group = "carbon_type"
 
     pal = _plot_theme(theme)
-    fig = Figure(figsize=(6.6, 4.6), dpi=200, facecolor=pal["face"])
+    fig = Figure(figsize=(8.0, 5.2), dpi=220, facecolor=pal["face"])
     ax = fig.add_subplot(111)
     ax.set_facecolor(pal["axes"])
 
@@ -241,7 +242,7 @@ def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str,
     fig.tight_layout(pad=1.4)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor=pal["face"], dpi=200)
+    fig.savefig(buf, format="png", facecolor=pal["face"], dpi=220)
     buf.seek(0)
     return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
 
