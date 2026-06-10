@@ -23,3 +23,7 @@ node_modules/
 # Private research data (not for the repo)
 test/
 *.opj
+
+# Raw font downloads — only the lean ./fonts/ subset (4 weights) is committed
+Google_Sans/
+SF Pro/

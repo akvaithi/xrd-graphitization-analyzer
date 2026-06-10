@@ -1,10 +1,16 @@
 """
 xrd_webgui.py — Browser GUI for the XRD Graphitization Analyzer.
 
-Self-contained local web app (stdlib http.server + headless matplotlib). For
-each uploaded .xy file it runs the one standard DG pipeline (graphitic +
-pure-Lorentzian turbostratic over the 24–27.5° window) and returns results +
-a high-resolution fit plot with the raw data points. Multiple files are paged.
+Single-page local web app (stdlib http.server + headless matplotlib). One shared
+file upload feeds four tabbed views:
+
+  • Analyze       — per-file DG fit (graphitic + pure-Lorentzian turbostratic over
+                    the 24–27.5° window) with a high-resolution plot; page files.
+  • Compare       — parsed run parameters table + ONE comparison chart whose points
+                    are toggled on/off by per-group and per-run checkboxes; CSV.
+  • Stack spectra — overlay/waterfall of raw intensities (offset slider) to compare
+                    peak heights across runs.
+  • Manual calc   — DG from hand-entered Origin peaks (NETL excel sheet).
 
 No Tk (works where macOS Tcl/Tk is broken) and no .brml. Wavelength is fixed to
 the Cu Kα standard (1.54187 Å) in xrd_analyzer.DEFAULT_WAVELENGTH.
@@ -31,7 +37,28 @@ import numpy as np
 # Headless backend — set before importing pyplot/Figure
 import matplotlib
 matplotlib.use("Agg")
+from matplotlib import font_manager
 from matplotlib.figure import Figure
+
+# Self-hosted SF Pro Text — bundled in ./fonts so plot text and the UI share the
+# same typeface and it works offline / in the slim container.
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+FONT_FILES = {
+    "SF-Pro-Text-Regular.otf", "SF-Pro-Text-Medium.otf",
+    "SF-Pro-Text-Semibold.otf", "SF-Pro-Text-Bold.otf",
+    "SF-Pro-Display-Regular.otf", "SF-Pro-Display-Semibold.otf",
+}
+for _fname in FONT_FILES:
+    _fpath = os.path.join(FONT_DIR, _fname)
+    if os.path.exists(_fpath):
+        try:
+            font_manager.fontManager.addfont(_fpath)
+        except Exception:  # noqa: BLE001 — fall back to DejaVu if a file is bad
+            pass
+# Prefer SF Pro Text for plot text; matplotlib falls back to DejaVu if unavailable.
+matplotlib.rcParams["font.family"] = "sans-serif"
+matplotlib.rcParams["font.sans-serif"] = ["SF Pro Text", "DejaVu Sans",
+                                          "Helvetica", "Arial"]
 
 from xrd_analyzer import (
     ANALYSIS_WINDOW,
@@ -60,22 +87,20 @@ _work_sem = threading.BoundedSemaphore(MAX_CONCURRENT)
 # ---------------------------------------------------------------------------
 # Plot colours
 # ---------------------------------------------------------------------------
-PANEL     = "#2a2a3e"
-RED_PEAK  = "#e64980"   # graphitic (works on light + dark)
-BLUE_PEAK = "#1098ad"   # turbostratic
-FIT_COL   = "#7048e8"   # total fit
-RAW_COL   = "#a9b1d6"
-MUTED     = "#565f89"
-TEXT      = "#c0caf5"
+# macOS system palette (Apple HIG) for plot strokes
+RED_PEAK  = "#ff3b30"   # graphitic     — systemRed
+BLUE_PEAK = "#30b0c7"   # turbostratic  — systemTeal
+FIT_COL   = "#5e5ce6"   # total fit     — systemIndigo
+RAW_COL   = "#aeaeb2"   # raw points    — systemGray
 
 
 def _plot_theme(theme: str) -> dict:
-    """Colour palette for plots, matched to the page light/dark theme."""
-    if theme == "light":
-        return {"face": "#ffffff", "axes": "#ffffff", "text": "#1a1b26",
-                "muted": "#5b6170", "grid": "#e6e8ee", "raw": "#495057"}
-    return {"face": PANEL, "axes": "#101018", "text": TEXT,
-            "muted": MUTED, "grid": "#22223a", "raw": RAW_COL}
+    """Plot palette matched to the macOS light/dark appearance (plot face = card)."""
+    if theme == "dark":
+        return {"face": "#2c2c2e", "axes": "#2c2c2e", "text": "#f5f5f7",
+                "muted": "#8e8e93", "grid": "#3a3a3c", "raw": "#aeaeb2"}
+    return {"face": "#ffffff", "axes": "#ffffff", "text": "#1d1d1f",
+            "muted": "#8e8e93", "grid": "#e5e5ea", "raw": "#48484a"}
 
 
 # Plot font sizes (points). Small points + a large figure → when the browser
@@ -85,7 +110,7 @@ FS_TITLE, FS_LABEL, FS_TICK, FS_LEGEND = 12, 11, 10, 10
 
 
 # ---------------------------------------------------------------------------
-# Plot rendering — one PNG per method
+# Plot rendering — per-file fit
 # ---------------------------------------------------------------------------
 
 def render_plot(pattern: XRDPattern, res: dict, theme: str = "dark") -> str:
@@ -130,7 +155,7 @@ def render_plot(pattern: XRDPattern, res: dict, theme: str = "dark") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Dashboard — parse run parameters, analyse, build dataset & comparison charts
+# Compare — parse run parameters, analyse, build dataset & comparison chart
 # ---------------------------------------------------------------------------
 
 # Selectable chart axes / metrics and their display labels
@@ -153,15 +178,17 @@ GROUP_LABELS = {
     "wash":        "Wash state",
     "none":        "(none)",
 }
-# Distinct colours for grouped series
-_SERIES_COLORS = ["#7aa2f7", "#f7768e", "#9ece6a", "#e0af68", "#bb9af7",
-                  "#7dcfff", "#ff9e64", "#9d7cd8"]
+# macOS system colours for grouped series / stacked spectra
+_SERIES_COLORS = ["#007aff", "#ff3b30", "#34c759", "#ff9500", "#af52de",
+                  "#5ac8fa", "#ff2d55", "#5856d6", "#ffcc00", "#00c7be",
+                  "#a2845e", "#30b0c7", "#ff9f0a", "#bf5af2", "#64d2ff", "#ac8e68"]
 
 
 def build_dashboard_rows(files: list[dict]) -> list[dict]:
     """
     For each {name, xy} entry: parse run parameters from the name and analyse
-    the pattern with the standard pipeline. Returns one flat row per file.
+    the pattern with the standard pipeline. Returns one flat row per file,
+    index-aligned with ``files``.
     """
     rows: list[dict] = []
     for f in files:
@@ -185,7 +212,12 @@ def build_dashboard_rows(files: list[dict]) -> list[dict]:
 
 def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str,
                            theme: str = "dark") -> str:
-    """Scatter/line chart of metric ``y`` vs parameter ``x``, grouped by ``group``."""
+    """
+    Scatter/line chart of metric ``y`` vs parameter ``x``, coloured by ``group``.
+
+    ``rows`` is the already-filtered set the caller wants plotted (the page hides
+    runs/groups via checkboxes and sends only the visible ones).
+    """
     if x not in X_LABELS:
         x = "temperature_C"
     if y not in Y_LABELS:
@@ -194,7 +226,7 @@ def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str,
         group = "carbon_type"
 
     pal = _plot_theme(theme)
-    fig = Figure(figsize=(8.0, 5.2), dpi=220, facecolor=pal["face"])
+    fig = Figure(figsize=(8.6, 5.4), dpi=220, facecolor=pal["face"])
     ax = fig.add_subplot(111)
     ax.set_facecolor(pal["axes"])
 
@@ -208,8 +240,9 @@ def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str,
         series.setdefault(str(gv), []).append((float(xv), float(yv)))
 
     if not series:
-        ax.text(0.5, 0.5, "No data for this combination", transform=ax.transAxes,
-                ha="center", va="center", color=pal["muted"], fontsize=FS_LABEL)
+        ax.text(0.5, 0.5, "No data — check at least one run/group",
+                transform=ax.transAxes, ha="center", va="center",
+                color=pal["muted"], fontsize=FS_LABEL)
     else:
         for i, (gv, pts) in enumerate(sorted(series.items())):
             xs = [p[0] for p in pts]
@@ -248,79 +281,266 @@ def render_dashboard_chart(rows: list[dict], x: str, y: str, group: str,
 
 
 # ---------------------------------------------------------------------------
-# HTML page
+# Stack spectra — overlay / waterfall of raw intensities to compare peak heights
 # ---------------------------------------------------------------------------
 
-INDEX_HTML = """<!DOCTYPE html>
+def render_stack(files: list[dict], offset: float = 0.25, theme: str = "dark",
+                 baseline: bool = False, window: tuple | None = None) -> str:
+    """
+    Overlay each file's raw intensity vs 2θ. ``offset`` (0–1, fraction of the
+    largest peak) shifts each successive curve up: 0 → flat overlay, >0 →
+    waterfall. ``window`` restricts the 2θ range; ``baseline`` removes a linear
+    background across the shown range so peak heights compare directly.
+    """
+    pal = _plot_theme(theme)
+    fig = Figure(figsize=(9.4, 6.0), dpi=220, facecolor=pal["face"])
+    ax = fig.add_subplot(111)
+    ax.set_facecolor(pal["axes"])
+
+    series: list[tuple[str, np.ndarray, np.ndarray]] = []
+    gmax = 0.0
+    for f in files:
+        try:
+            p = XRDPattern.from_text(f.get("xy", ""))
+        except Exception:  # noqa: BLE001 — skip an unreadable file, keep the rest
+            continue
+        x, y = p.two_theta, p.intensity
+        if window is not None:
+            m = (x >= window[0]) & (x <= window[1])
+            x, y = x[m], y[m]
+        if x.size == 0:
+            continue
+        if baseline and x.size > 1:
+            y = y - np.linspace(y[0], y[-1], y.size)
+        name = str(f.get("name", ""))
+        if len(name) > 48:
+            name = name[:47] + "…"
+        series.append((name, x, y))
+        gmax = max(gmax, float(np.nanmax(y)))
+
+    if not series:
+        ax.text(0.5, 0.5, "Select files to stack", transform=ax.transAxes,
+                ha="center", va="center", color=pal["muted"], fontsize=FS_LABEL)
+    else:
+        step = max(offset, 0.0) * gmax
+        for i, (name, x, y) in enumerate(series):
+            color = _SERIES_COLORS[i % len(_SERIES_COLORS)]
+            ax.plot(x, y + i * step, lw=1.0, color=color, alpha=0.95, label=name)
+        # A long legend gets unreadable; only show it for a manageable count.
+        if len(series) <= 14:
+            ax.legend(fontsize=FS_LEGEND, facecolor=pal["face"], edgecolor=pal["muted"],
+                      labelcolor=pal["text"], framealpha=0.9, loc="upper right")
+        else:
+            ax.text(0.99, 0.98, f"{len(series)} spectra", transform=ax.transAxes,
+                    ha="right", va="top", color=pal["muted"], fontsize=FS_LEGEND)
+
+    ax.tick_params(colors=pal["muted"], labelsize=FS_TICK)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(pal["muted"])
+    ax.grid(True, color=pal["grid"], lw=0.6)
+    ax.set_xlabel("2θ  (degrees)", color=pal["muted"], fontsize=FS_LABEL)
+    ax.set_ylabel("Intensity  (a.u.)" + ("  — offset" if (series and offset > 0) else ""),
+                  color=pal["muted"], fontsize=FS_LABEL)
+    mode = "waterfall" if offset > 0 else "overlay"
+    ax.set_title(f"Stacked raw spectra ({mode})", color=pal["text"], fontsize=FS_TITLE, pad=8)
+    fig.tight_layout(pad=1.4)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=pal["face"], dpi=220)
+    buf.seek(0)
+    return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
+
+
+# ---------------------------------------------------------------------------
+# Single-page HTML (tabs share one upload)
+# ---------------------------------------------------------------------------
+
+PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XRD Graphitization Analyzer</title>
 <style>
+  /* Self-hosted SF Pro (OTF) — bundled; no external request, works offline.
+     HIG: SF Pro Text for body (≤19pt), SF Pro Display for large headings (≥20pt). */
+  @font-face { font-family:'SF Pro Text'; font-weight:400; src:url('/fonts/SF-Pro-Text-Regular.otf') format('opentype'); font-display:swap; }
+  @font-face { font-family:'SF Pro Text'; font-weight:500; src:url('/fonts/SF-Pro-Text-Medium.otf') format('opentype'); font-display:swap; }
+  @font-face { font-family:'SF Pro Text'; font-weight:600; src:url('/fonts/SF-Pro-Text-Semibold.otf') format('opentype'); font-display:swap; }
+  @font-face { font-family:'SF Pro Text'; font-weight:700; src:url('/fonts/SF-Pro-Text-Bold.otf') format('opentype'); font-display:swap; }
+  @font-face { font-family:'SF Pro Display'; font-weight:400; src:url('/fonts/SF-Pro-Display-Regular.otf') format('opentype'); font-display:swap; }
+  @font-face { font-family:'SF Pro Display'; font-weight:600; src:url('/fonts/SF-Pro-Display-Semibold.otf') format('opentype'); font-display:swap; }
+
+  /* macOS semantic colour system (Apple HIG) — light is the default appearance */
   :root {
-    --bg:#1e1e2e; --panel:#2a2a3e; --accent:#7aa2f7; --green:#9ece6a;
-    --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296;
-    --inset:#12121e; --line:#23233a; --dgbg:#2d2038;
+    --bg:#f2f2f7; --bg2:#ffffff; --card:#ffffff;
+    --bar:rgba(246,246,248,0.72); --bar-border:rgba(0,0,0,0.10);
+    --label:rgba(0,0,0,0.85); --label2:rgba(0,0,0,0.50); --label3:rgba(0,0,0,0.28);
+    --sep:rgba(0,0,0,0.10); --sep2:rgba(0,0,0,0.06);
+    --fill:rgba(118,118,128,0.12); --fill2:rgba(118,118,128,0.20);
+    --accent:#007aff; --accent-press:#0063cc; --on-accent:#ffffff;
+    --green:#34c759; --red:#ff3b30; --orange:#ff9500;
+    --shadow:0 1px 2px rgba(0,0,0,0.10), 0 6px 18px rgba(0,0,0,0.06);
+    --focus:rgba(0,122,255,0.45);
+    --font-text:'SF Pro Text',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;
+    --font-display:'SF Pro Display',var(--font-text);
   }
-  :root[data-theme="light"] {
-    --bg:#eef0f5; --panel:#ffffff; --accent:#3b5bdb; --green:#2f9e44;
-    --amber:#e8590c; --text:#1a1b26; --muted:#5b6170; --btn:#dbe4ff; --btnact:#bac8ff;
-    --inset:#f1f3f8; --line:#e6e8ee; --dgbg:#f3effb;
+  :root[data-theme="dark"] {
+    --bg:#1c1c1e; --bg2:#000000; --card:#2c2c2e;
+    --bar:rgba(40,40,42,0.72); --bar-border:rgba(255,255,255,0.12);
+    --label:rgba(255,255,255,0.92); --label2:rgba(255,255,255,0.55); --label3:rgba(255,255,255,0.30);
+    --sep:rgba(255,255,255,0.12); --sep2:rgba(255,255,255,0.07);
+    --fill:rgba(118,118,128,0.24); --fill2:rgba(118,118,128,0.36);
+    --accent:#0a84ff; --accent-press:#3a9bff; --on-accent:#ffffff;
+    --green:#30d158; --red:#ff453a; --orange:#ff9f0a;
+    --shadow:0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.36);
+    --focus:rgba(10,132,255,0.55);
   }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font-family:-apple-system,Helvetica,Arial,sans-serif; }
-  header { background:var(--panel); padding:14px 22px; display:flex;
-           align-items:center; gap:14px; flex-wrap:wrap; border-bottom:1px solid var(--inset); }
-  header h1 { font-size:18px; color:var(--accent); margin:0; }
-  .controls { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  button, .filebtn {
-    background:var(--btn); color:var(--text); border:none; border-radius:6px;
-    padding:8px 16px; font-size:13px; cursor:pointer; transition:background .15s;
-  }
-  button:hover, .filebtn:hover { background:var(--btnact); }
-  button.primary { background:var(--accent); color:var(--bg); font-weight:600; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  #fname { color:var(--muted); font-size:13px; font-family:monospace; }
-  select { background:var(--btn); color:var(--text); border:none;
-           border-radius:6px; padding:8px 10px; font-size:13px; }
-  .navlink { color:var(--amber); text-decoration:none; font-size:13px; font-weight:600;
-             padding:6px 12px; border:1px solid var(--amber); border-radius:6px; }
-  .navlink:hover { background:var(--amber); color:var(--bg); }
-  main { display:grid; grid-template-columns:380px 1fr; gap:16px; padding:16px; }
-  @media (max-width:860px){ main{ grid-template-columns:1fr; } }
-  .card { background:var(--panel); border-radius:10px; padding:18px; }
-  .section { color:var(--accent); font-size:13px; font-weight:600;
-             margin:16px 0 6px; border-bottom:1px solid var(--muted); padding-bottom:4px; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; background:var(--bg); color:var(--label); font-family:var(--font-text);
+         font-size:13px; line-height:1.45; -webkit-font-smoothing:antialiased;
+         -moz-osx-font-smoothing:grayscale; text-rendering:optimizeLegibility; }
+  ::selection { background:color-mix(in srgb, var(--accent) 26%, transparent); }
+  a { color:var(--accent); }
+
+  /* Toolbar — vibrant material */
+  header { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:12px;
+           flex-wrap:wrap; padding:11px 20px; background:var(--bar);
+           -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px);
+           border-bottom:0.5px solid var(--bar-border); }
+  header h1 { font-family:var(--font-display); font-size:17px; font-weight:600; letter-spacing:-0.01em;
+              color:var(--label); margin:0; flex:0 0 auto; }
+  .spacer { flex:1 1 auto; }
+  #fname { color:var(--label2); font-size:12px; }
+
+  /* Push buttons */
+  button, .filebtn { font-family:inherit; font-size:13px; font-weight:500; cursor:pointer;
+    border:none; border-radius:8px; padding:7px 14px; color:var(--label); background:var(--fill);
+    transition:background .12s, transform .04s, box-shadow .12s; }
+  button:hover, .filebtn:hover { background:var(--fill2); }
+  button:active, .filebtn:active { transform:scale(0.975); }
+  button.primary, .filebtn { background:var(--accent); color:var(--on-accent); font-weight:600;
+    box-shadow:0 1px 1.5px rgba(0,0,0,0.18); }
+  button.primary:hover, .filebtn:hover { background:var(--accent-press); }
+  button:disabled { opacity:.4; cursor:not-allowed; transform:none; }
+  .themebtn { background:var(--fill); color:var(--label); padding:6px 12px; font-size:12px; box-shadow:none; }
+  .themebtn:hover { background:var(--fill2); }
+  .mini { font-size:12px; padding:5px 11px; }
+
+  /* Pop-up buttons / fields / controls */
+  select { font-family:inherit; font-size:13px; color:var(--label); background:var(--fill);
+    border:0.5px solid var(--sep); border-radius:7px; padding:6px 10px; transition:background .12s; }
+  select:hover { background:var(--fill2); }
+  input.num { font-family:inherit; font-size:13px; color:var(--label); background:var(--bg2);
+    border:0.5px solid var(--sep); border-radius:7px; padding:6px 10px; width:130px; }
+  input[type=checkbox] { accent-color:var(--accent); width:15px; height:15px; }
+  input[type=range] { accent-color:var(--accent); }
+  :focus-visible { outline:3px solid var(--focus); outline-offset:1px; border-radius:7px; }
+
+  /* Segmented control (tabs) */
+  nav.tabs { position:sticky; top:48px; z-index:15; display:flex; justify-content:center;
+             padding:10px 16px; background:var(--bar);
+             -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px);
+             border-bottom:0.5px solid var(--bar-border); }
+  .seg { display:inline-flex; gap:2px; padding:2px; background:var(--fill); border-radius:9px; }
+  .tab { background:transparent; color:var(--label); font-size:13px; font-weight:500;
+         padding:5px 16px; border-radius:7px; transition:background .12s, box-shadow .12s; }
+  .tab:hover { background:transparent; color:var(--label); }
+  .tab.active { background:var(--card); color:var(--label); font-weight:600;
+    box-shadow:0 1px 2px rgba(0,0,0,0.16); }
+
+  .panel { display:none; padding:20px; max-width:1240px; margin:0 auto; }
+  .panel.active { display:block; }
+  .grid2 { display:grid; grid-template-columns:minmax(320px,400px) 1fr; gap:18px; }
+  @media (max-width:900px){ .grid2{ grid-template-columns:1fr; } }
+  .grid-chart { display:grid; grid-template-columns:1fr 260px; gap:18px; align-items:start; }
+  @media (max-width:840px){ .grid-chart{ grid-template-columns:1fr; } }
+
+  /* Cards — grouped content */
+  .card { background:var(--card); border-radius:14px; padding:20px; margin-bottom:18px;
+          box-shadow:var(--shadow); overflow:auto; }
+  .card:last-child { margin-bottom:0; }
+  .card h2 { font-family:var(--font-display); font-size:15px; font-weight:600; letter-spacing:-0.01em;
+             color:var(--label); margin:0 0 14px; }
+  .filetitle { font-family:var(--font-display); font-size:16px; font-weight:600; letter-spacing:-0.01em;
+               color:var(--label); margin:0 0 2px; line-height:1.3; word-break:break-word; }
+  .filesub { color:var(--label3); font-size:11px; margin:0 0 14px; word-break:break-all; }
+  .section { color:var(--label2); font-size:11px; font-weight:600; letter-spacing:0.04em;
+             text-transform:uppercase; margin:18px 0 6px; padding-bottom:5px;
+             border-bottom:0.5px solid var(--sep); }
   .section:first-child { margin-top:0; }
-  .row { display:flex; justify-content:space-between; align-items:baseline;
-         padding:3px 0; font-size:13px; }
-  .row .lbl { color:var(--text); }
-  .row .val { color:var(--green); font-family:monospace; font-weight:600; }
-  .row .unit { color:var(--muted); font-size:11px; margin-left:4px; }
-  .dgbox { margin-top:20px; background:var(--dgbg); border-radius:10px; padding:18px; text-align:center; }
-  .dgbox .cap { color:var(--muted); font-size:12px; }
-  .dgbox .dg { color:var(--amber); font-size:38px; font-weight:700; margin:6px 0; }
-  #plot { width:100%; border-radius:8px; display:block; }
-  #plotwrap { display:flex; align-items:center; justify-content:center; min-height:360px; color:var(--muted); }
-  #status { padding:8px 22px; background:var(--inset); color:var(--muted); font-size:12px; }
-  #status.error { color:#f7768e; }
-  .placeholder { color:var(--muted); text-align:center; }
-  #pager { display:none; align-items:center; gap:10px; padding:8px 22px;
-           background:var(--panel); border-bottom:1px solid var(--inset); font-size:13px; }
-  #pager button { padding:6px 12px; }
-  #pager button:disabled { opacity:.4; cursor:not-allowed; }
-  #pagerInfo { color:var(--muted); }
-  #fileSel { max-width:420px; }
-  #fileSel option.err { color:#f7768e; }
-  .themebtn { background:var(--btn); color:var(--text); border:none; border-radius:6px;
-              padding:6px 11px; font-size:13px; cursor:pointer; }
-  .themebtn:hover { background:var(--btnact); }
+  .row { display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+         padding:5px 0; font-size:13px; border-bottom:0.5px solid var(--sep2); }
+  .row:last-child { border-bottom:none; }
+  .row .val { color:var(--label); font-weight:600; font-variant-numeric:tabular-nums; }
+  .row .unit { color:var(--label2); font-size:11px; margin-left:4px; font-weight:400; }
+
+  /* DG callout */
+  .dgbox { margin-top:20px; background:color-mix(in srgb, var(--accent) 12%, var(--card));
+           border:0.5px solid color-mix(in srgb, var(--accent) 30%, transparent);
+           border-radius:14px; padding:20px; text-align:center; }
+  .dgbox .cap { color:var(--label2); font-size:12px; }
+  .dgbox .dg { font-family:var(--font-display); color:var(--accent); font-size:44px; font-weight:600;
+               letter-spacing:-0.02em; margin:6px 0; font-variant-numeric:tabular-nums; }
+
+  img.plot, img.chartimg { width:100%; border-radius:10px; display:block; }
+  #plotwrap, #chartwrap, #stackwrap { display:flex; align-items:center; justify-content:center;
+            min-height:340px; color:var(--label2); }
+
+  .filebar { display:flex; align-items:center; gap:10px; margin-bottom:16px; font-size:13px; }
+  .filebar button { padding:5px 12px; }
+  #fileSel { max-width:560px; }
+  .muted { color:var(--label2); font-size:12px; }
+
+  .ctrls { display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+  .ctrls label { color:var(--label2); font-size:12px; display:flex; gap:7px; align-items:center; }
+  .ctrls input[type=range] { vertical-align:middle; }
+  .tog { display:flex; gap:7px; align-items:center; color:var(--label)!important; }
+
+  /* Checklists */
+  .checks { font-size:12px; }
+  .checkhdr { display:flex; justify-content:space-between; align-items:baseline;
+              color:var(--label2); font-weight:600; font-size:11px; letter-spacing:0.03em;
+              text-transform:uppercase; margin:0 0 7px; }
+  .checkhdr:not(:first-child) { margin-top:16px; }
+  .checkhdr a { color:var(--accent); cursor:pointer; text-decoration:none; font-weight:500;
+                font-size:11px; text-transform:none; letter-spacing:0; }
+  .checkhdr a:hover { text-decoration:underline; }
+  .checklist { max-height:300px; overflow:auto; border:0.5px solid var(--sep);
+               border-radius:10px; padding:8px 10px; background:var(--bg); }
+  .ck { display:flex; gap:8px; align-items:center; padding:3px 0; color:var(--label);
+        white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  .ck input { flex:0 0 auto; }
+
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  .chip { background:var(--fill); color:var(--label2); border-radius:8px; padding:3px 10px;
+          font-size:11px; font-weight:500; }
+
+  /* Table */
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th, td { padding:7px 10px; text-align:right; border-bottom:0.5px solid var(--sep);
+           white-space:nowrap; font-variant-numeric:tabular-nums; }
+  th { color:var(--label2); font-weight:600; position:sticky; top:0; background:var(--card); }
+  td.lbl, th.lbl { text-align:left; max-width:260px; overflow:hidden; text-overflow:ellipsis;
+                   font-variant-numeric:normal; }
+  td.miss { color:var(--label3); }
+  tr.err td { color:var(--red); }
+
+  .peakrow { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
+  .peakrow label { color:var(--label2); font-size:12px; width:80px; }
+  .hint { color:var(--label2); font-size:12px; margin:8px 0 16px; line-height:1.5; }
+
+  /* Status bar */
+  #status { position:sticky; bottom:0; padding:8px 20px; background:var(--bar);
+            -webkit-backdrop-filter:saturate(180%) blur(20px); backdrop-filter:saturate(180%) blur(20px);
+            border-top:0.5px solid var(--bar-border); color:var(--label2); font-size:11px; }
+  #status.error { color:var(--red); }
+  .placeholder { color:var(--label2); text-align:center; padding:34px 0; font-size:13px; }
 </style>
 <script>
 (function(){var d=document.documentElement;
-  d.dataset.theme=localStorage.getItem('xrd-theme')||'dark';
+  d.dataset.theme=localStorage.getItem('xrd-theme')||'light';
   addEventListener('DOMContentLoaded',function(){var b=document.getElementById('themeBtn');
     if(b)b.onclick=function(){var n=d.dataset.theme==='dark'?'light':'dark';
       d.dataset.theme=n;localStorage.setItem('xrd-theme',n);b.textContent=n==='dark'?'◐ Light':'◑ Dark';
@@ -331,261 +551,106 @@ INDEX_HTML = """<!DOCTYPE html>
 <body>
 <header>
   <h1>XRD Graphitization Analyzer</h1>
-  <button id="themeBtn" class="themebtn"></button>
-  <a class="navlink" href="/dashboard">Run Dashboard →</a>
-  <a class="navlink" href="/manual">Manual Calc →</a>
-  <div class="controls">
-    <label class="filebtn">Choose .xy file(s)…
-      <input id="file" type="file" accept=".xy,.txt,.dat,text/plain" multiple style="display:none">
-    </label>
-    <span id="fname">no file selected</span>
-    <button id="analyze" class="primary" disabled>Analyze</button>
-  </div>
-</header>
-
-<div id="pager">
-  <button id="prevBtn">◀ Prev</button>
-  <select id="fileSel" title="Jump to a file"></select>
-  <button id="nextBtn">Next ▶</button>
-  <span id="pagerInfo"></span>
-</div>
-
-<main>
-  <div class="card" id="results">
-    <div class="placeholder">Choose file(s) and click Analyze.</div>
-  </div>
-  <div class="card">
-    <div id="plotwrap"><span class="placeholder">Plot appears here after analysis.</span></div>
-  </div>
-</main>
-
-<div id="status">Ready.</div>
-
-<script>
-const fileInput = document.getElementById('file');
-const fnameEl   = document.getElementById('fname');
-const analyzeBtn= document.getElementById('analyze');
-const statusEl  = document.getElementById('status');
-const resultsEl = document.getElementById('results');
-const plotWrap  = document.getElementById('plotwrap');
-const pagerEl   = document.getElementById('pager');
-const prevBtn   = document.getElementById('prevBtn');
-const nextBtn   = document.getElementById('nextBtn');
-const fileSel   = document.getElementById('fileSel');
-const pagerInfo = document.getElementById('pagerInfo');
-
-let xyFiles = [];   // [{name, text}]
-let batch   = [];   // [{name, data}|{name, error}]  one result per file
-let current = 0;
-const theme = () => document.documentElement.dataset.theme || 'dark';
-window.onThemeChange = () => { if (batch.length) runAnalysis(); };  // re-render plots
-
-function setStatus(msg, isError=false){ statusEl.textContent = msg; statusEl.className = isError?'error':''; }
-function readText(f){ return new Promise((res,rej)=>{ const r=new FileReader();
-  r.onload=e=>res(e.target.result); r.onerror=()=>rej(new Error('read failed: '+f.name)); r.readAsText(f); }); }
-
-fileInput.addEventListener('change', async e => {
-  const files = Array.from(e.target.files || []);
-  if (!files.length) return;
-  try { xyFiles = await Promise.all(files.map(async f => ({name:f.name, text:await readText(f)}))); }
-  catch (err) { setStatus('Could not read .xy file(s): '+err, true); return; }
-  fnameEl.textContent = xyFiles.length===1 ? xyFiles[0].name : `${xyFiles.length} files selected`;
-  analyzeBtn.disabled = false;
-  setStatus(`${xyFiles.length} file(s) loaded — click Analyze.`);
-});
-
-analyzeBtn.addEventListener('click', runAnalysis);
-prevBtn.addEventListener('click', () => showResult(current-1));
-nextBtn.addEventListener('click', () => showResult(current+1));
-fileSel.addEventListener('change', () => showResult(parseInt(fileSel.value,10)));
-
-async function analyzeOne(file){
-  try {
-    const resp = await fetch('/analyze', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({xy:file.text, theme:theme()}),
-    });
-    const data = await resp.json();
-    if (!resp.ok || data.error) return {name:file.name, error:(data.error||resp.statusText)};
-    return {name:file.name, data:data};
-  } catch (err) { return {name:file.name, error:String(err)}; }
-}
-
-async function runAnalysis(){
-  if (!xyFiles.length){ setStatus('No .xy file selected.', true); return; }
-  analyzeBtn.disabled = true; analyzeBtn.textContent = 'Working…';
-  batch = [];
-  for (let i=0;i<xyFiles.length;i++){
-    setStatus(`Analyzing ${i+1}/${xyFiles.length}: ${xyFiles[i].name}…`);
-    batch.push(await analyzeOne(xyFiles[i]));
-  }
-  current = 0; renderPager(); showResult(0);
-  const ok = batch.filter(b=>!b.error).length;
-  if (batch.length===1 && ok===1)
-    setStatus(`Done — ${batch[0].name}   DG = ${batch[0].data.DG_percent.toFixed(2)}%`);
-  else setStatus(`Done — ${ok}/${batch.length} file(s) analyzed.`);
-  analyzeBtn.disabled = false; analyzeBtn.textContent = 'Analyze';
-}
-
-function renderPager(){
-  if (batch.length<=1){ pagerEl.style.display='none'; return; }
-  pagerEl.style.display='flex';
-  fileSel.innerHTML = batch.map((b,i)=>{
-    const tag = b.error ? 'ERROR' : `DG ${b.data.DG_percent.toFixed(2)}%`;
-    const cls = b.error ? ' class="err"' : '';
-    return `<option value="${i}"${cls}>${i+1}/${batch.length}  ${b.name}  —  ${tag}</option>`;
-  }).join('');
-}
-
-function showResult(i){
-  if (i<0 || i>=batch.length) return;
-  current = i;
-  if (batch.length>1){
-    fileSel.value=String(i); pagerInfo.textContent=`File ${i+1} of ${batch.length}`;
-    prevBtn.disabled=(i===0); nextBtn.disabled=(i===batch.length-1);
-  }
-  const entry = batch[i];
-  if (entry.error){ showError(entry.name, entry.error); return; }
-  renderResults(entry.data);
-  if (entry.data.plot_png) plotWrap.innerHTML = `<img id="plot" src="${entry.data.plot_png}" alt="fit plot">`;
-  else plotWrap.innerHTML = `<span class="placeholder">No plot.</span>`;
-}
-
-function showError(name, msg){
-  resultsEl.innerHTML = `<div class="section">${name}</div>` +
-    `<div class="placeholder" style="color:#f7768e">Analysis failed:<br><br>${msg}</div>`;
-  plotWrap.innerHTML = `<span class="placeholder">No plot — analysis failed.</span>`;
-}
-
-function row(lbl,val,unit=''){ return `<div class="row"><span class="lbl">${lbl}</span>`+
-  `<span><span class="val">${val}</span>`+(unit?`<span class="unit">${unit}</span>`:'')+`</span></div>`; }
-function peakRows(p){ return row('  xc (2θ)', p.xc.toFixed(4),'°')+row('  w (FWHM)', p.w.toFixed(4),'°')+
-  row('  μ', p.mu.toFixed(4))+row('  A (area)', p.A.toFixed(4))+row('  d-spacing', p.d_spacing_angstrom.toFixed(6),'Å'); }
-
-function renderResults(d){
-  const pct = x => (x*100).toFixed(2)+'%';
-  let html = `<div class="section">${d.method_name}</div>` +
-    row('Wavelength λ', d.wavelength_angstrom.toFixed(5),'Å') +
-    `<div class="section">Graphitic peak</div>` + peakRows(d.graphitic) +
-    `<div class="section">Turbostratic peak (Lorentzian)</div>` + peakRows(d.turbostratic) +
-    `<div class="section">Result</div>` +
-    row('X_g / X_t', pct(d.area_fraction_graphitic)+' / '+pct(d.area_fraction_turbostratic)) +
-    row("d′ weighted", d.d_spacing_weighted_angstrom.toFixed(6),'Å') +
-    row('Crystallite Lc', d.crystallite_height_Lc_angstrom.toFixed(2),'Å') +
-    row('fit R²', d.fit_r2.toFixed(5));
-  html += `<div class="dgbox"><div class="cap">Degree of Graphitization</div>` +
-          `<div class="dg">${d.DG_percent.toFixed(2)} %</div>` +
-          `<div class="cap">Maire-Mering equation</div></div>`;
-  resultsEl.innerHTML = html;
-}
-</script>
-</body>
-</html>
-"""
-
-
-DASHBOARD_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>XRD Run Dashboard</title>
-<style>
-  :root { --bg:#1e1e2e; --panel:#2a2a3e; --accent:#7aa2f7; --green:#9ece6a;
-          --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296;
-          --inset:#12121e; --line:#23233a; --dgbg:#2d2038; }
-  :root[data-theme="light"] { --bg:#eef0f5; --panel:#ffffff; --accent:#3b5bdb; --green:#2f9e44;
-          --amber:#e8590c; --text:#1a1b26; --muted:#5b6170; --btn:#dbe4ff; --btnact:#bac8ff;
-          --inset:#f1f3f8; --line:#e6e8ee; --dgbg:#f3effb; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font-family:-apple-system,Helvetica,Arial,sans-serif; }
-  header { background:var(--panel); padding:14px 22px; display:flex; align-items:center;
-           gap:14px; flex-wrap:wrap; border-bottom:1px solid var(--inset); }
-  header h1 { font-size:18px; color:var(--accent); margin:0; }
-  .navlink { color:var(--amber); text-decoration:none; font-size:13px; font-weight:600;
-             padding:6px 12px; border:1px solid var(--amber); border-radius:6px; }
-  .navlink:hover { background:var(--amber); color:var(--bg); }
-  button, .filebtn { background:var(--btn); color:var(--text); border:none; border-radius:6px;
-    padding:8px 16px; font-size:13px; cursor:pointer; transition:background .15s; }
-  button:hover, .filebtn:hover { background:var(--btnact); }
-  button.primary { background:var(--accent); color:var(--bg); font-weight:600; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  #fname { color:var(--muted); font-size:13px; font-family:monospace; }
-  select { background:var(--btn); color:var(--text); border:none; border-radius:6px;
-           padding:7px 10px; font-size:13px; }
-  main { display:grid; grid-template-columns:1fr 1fr; gap:16px; padding:16px; }
-  @media (max-width:980px){ main{ grid-template-columns:1fr; } }
-  .card { background:var(--panel); border-radius:10px; padding:16px; overflow:auto; }
-  .card h2 { font-size:14px; color:var(--accent); margin:0 0 10px; }
-  table { border-collapse:collapse; width:100%; font-size:12px; }
-  th, td { padding:5px 8px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap; }
-  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); }
-  td.lbl, th.lbl { text-align:left; max-width:240px; overflow:hidden; text-overflow:ellipsis; }
-  td.miss { color:var(--muted); }
-  tr.err td { color:#f7768e; }
-  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
-  .chip { background:var(--inset); color:var(--text); border-radius:12px; padding:3px 10px; font-size:11px; }
-  .ctrls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
-  .ctrls label { color:var(--muted); font-size:12px; }
-  .tablecard { grid-column:1 / -1; }
-  .mini { font-size:11px; padding:4px 10px; margin-left:10px; vertical-align:middle; }
-  .chartimg { width:100%; border-radius:8px; display:block; }
-  #status { padding:8px 22px; background:var(--inset); color:var(--muted); font-size:12px; }
-  #status.error { color:#f7768e; }
-  .placeholder { color:var(--muted); text-align:center; padding:40px 0; }
-  .themebtn { background:var(--btn); color:var(--text); border:none; border-radius:6px;
-              padding:6px 11px; font-size:13px; cursor:pointer; }
-  .themebtn:hover { background:var(--btnact); }
-</style>
-<script>
-(function(){var d=document.documentElement;
-  d.dataset.theme=localStorage.getItem('xrd-theme')||'dark';
-  addEventListener('DOMContentLoaded',function(){var b=document.getElementById('themeBtn');
-    if(b)b.onclick=function(){var n=d.dataset.theme==='dark'?'light':'dark';
-      d.dataset.theme=n;localStorage.setItem('xrd-theme',n);b.textContent=n==='dark'?'◐ Light':'◑ Dark';
-      if(window.onThemeChange)window.onThemeChange(n);};
-    if(b)b.textContent=d.dataset.theme==='dark'?'◐ Light':'◑ Dark';});})();
-</script>
-</head>
-<body>
-<header>
-  <h1>XRD Run Dashboard</h1>
-  <button id="themeBtn" class="themebtn"></button>
-  <a class="navlink" href="/">← Analyzer</a>
-  <label class="filebtn">Choose .xy files…
-    <input id="files" type="file" accept=".xy,.txt,.dat,text/plain" multiple style="display:none">
+  <div class="spacer"></div>
+  <label class="filebtn">Choose .xy file(s)…
+    <input id="file" type="file" accept=".xy,.txt,.dat,text/plain" multiple style="display:none">
   </label>
   <span id="fname">no files selected</span>
-  <button id="run" class="primary" disabled>Analyze runs</button>
+  <button id="themeBtn" class="themebtn"></button>
 </header>
 
-<main>
-  <div class="card tablecard">
-    <h2>Parsed runs &amp; results
-      <button id="csvBtn" class="mini" disabled>Download CSV</button></h2>
+<nav class="tabs"><div class="seg">
+  <button class="tab active" data-tab="analyze">Analyze</button>
+  <button class="tab" data-tab="compare">Compare</button>
+  <button class="tab" data-tab="stack">Stack spectra</button>
+  <button class="tab" data-tab="manual">Manual calc</button>
+</div></nav>
+
+<!-- ANALYZE ----------------------------------------------------------------->
+<section id="tab-analyze" class="panel active">
+  <div class="filebar" id="fileBar" style="display:none">
+    <button id="prevBtn">◀ Prev</button>
+    <select id="fileSel" title="Jump to a file"></select>
+    <button id="nextBtn">Next ▶</button>
+    <span id="fileInfo" class="muted"></span>
+  </div>
+  <div class="grid2">
+    <div class="card" id="results"><div class="placeholder">Choose .xy file(s) — analysis runs automatically.</div></div>
+    <div class="card"><div id="plotwrap"><span class="placeholder">Fit plot appears here.</span></div></div>
+  </div>
+</section>
+
+<!-- COMPARE ----------------------------------------------------------------->
+<section id="tab-compare" class="panel">
+  <div class="card">
+    <div class="ctrls">
+      <label>Y <select id="ySel"></select></label>
+      <label>X <select id="xSel"></select></label>
+      <label>Color by <select id="gSel"></select></label>
+      <button id="csvBtn" class="mini" disabled>Download CSV</button>
+    </div>
+    <div class="grid-chart">
+      <div id="chartwrap"><div class="placeholder">Upload runs to compare.</div></div>
+      <div class="checks">
+        <div class="checkhdr">Groups <span><a id="grpAll">all</a> · <a id="grpNone">none</a></span></div>
+        <div id="grpChecks" class="checklist"></div>
+        <div class="checkhdr">Runs <span><a id="runAll">all</a> · <a id="runNone">none</a></span></div>
+        <div id="runChecks" class="checklist"></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Parsed runs &amp; results</h2>
     <div id="chips" class="chips"></div>
-    <div id="tablewrap"><div class="placeholder">Upload .xy files to extract run parameters.</div></div>
+    <div id="tablewrap"><div class="placeholder">Parsed run parameters appear here.</div></div>
   </div>
+</section>
+
+<!-- STACK ------------------------------------------------------------------->
+<section id="tab-stack" class="panel">
   <div class="card">
-    <h2>Chart 1</h2>
     <div class="ctrls">
-      <label>Y<select id="ySel1"></select></label>
-      <label>X<select id="xSel1"></select></label>
-      <label>Group<select id="gSel1"></select></label>
+      <label>Offset <input id="offset" type="range" min="0" max="1" step="0.05" value="0.25">
+        <span id="offVal" class="muted">0.25</span></label>
+      <label class="tog"><input type="checkbox" id="stkZoom"> Zoom (002) 24–30°</label>
+      <label class="tog"><input type="checkbox" id="stkBase"> Baseline subtract</label>
     </div>
-    <div id="chartwrap1"><div class="placeholder">Chart appears after analysis.</div></div>
-  </div>
-  <div class="card">
-    <h2>Chart 2</h2>
-    <div class="ctrls">
-      <label>Y<select id="ySel2"></select></label>
-      <label>X<select id="xSel2"></select></label>
-      <label>Group<select id="gSel2"></select></label>
+    <div class="grid-chart">
+      <div id="stackwrap"><div class="placeholder">Upload spectra, then check files to stack.</div></div>
+      <div class="checks">
+        <div class="checkhdr">Files <span><a id="stkAll">all</a> · <a id="stkNone">none</a></span></div>
+        <div id="stkChecks" class="checklist"></div>
+      </div>
     </div>
-    <div id="chartwrap2"><div class="placeholder">Chart appears after analysis.</div></div>
   </div>
-</main>
+</section>
+
+<!-- MANUAL ------------------------------------------------------------------>
+<section id="tab-manual" class="panel">
+  <div class="grid2">
+    <div class="card">
+      <h2>Enter Origin fit peaks (NETL excel sheet)</h2>
+      <label class="tog" style="margin-bottom:14px"><input type="checkbox" id="two"> Two peaks (graphitic + turbostratic)</label>
+      <div class="peakrow">
+        <label>Graphitic</label>
+        <input id="xc1" class="num" type="number" step="0.0001" placeholder="xc (2θ °)">
+        <input id="a1"  class="num" type="number" step="0.0001" placeholder="area (A)">
+      </div>
+      <div class="peakrow" id="row2" style="display:none">
+        <label>Turbostratic</label>
+        <input id="xc2" class="num" type="number" step="0.0001" placeholder="xc (2θ °)">
+        <input id="a2"  class="num" type="number" step="0.0001" placeholder="area (A)">
+      </div>
+      <div class="hint">λ fixed at Cu Kα 1.54187 Å. Graphitic = higher 2θ peak.
+        One peak → DG from its d-spacing; two → area-weighted (Maire-Mering).</div>
+      <button id="calc" class="primary">Calculate DG%</button>
+    </div>
+    <div class="card">
+      <h2>Result</h2>
+      <div id="out"><div class="placeholder">Enter peak values and calculate.</div></div>
+    </div>
+  </div>
+</section>
 
 <div id="status">Ready.</div>
 
@@ -596,213 +661,261 @@ const Y = {DG:"DG%", Lc:"Crystallite Lc (Å)", d_prime:"d′ weighted (Å)",
            graphitic_xc:"Graphitic 2θ (°)"};
 const G = {carbon_type:"Carbon type", form:"Sample form", wash:"Wash state", none:"(none)"};
 
-const filesEl=document.getElementById('files'), fnameEl=document.getElementById('fname');
-const runBtn=document.getElementById('run'), statusEl=document.getElementById('status');
-const csvBtn=document.getElementById('csvBtn');
-const tablewrap=document.getElementById('tablewrap'), chipsEl=document.getElementById('chips');
-// Two independent chart panels (suffix 1 / 2)
-const panels={
-  '1':{x:document.getElementById('xSel1'), y:document.getElementById('ySel1'),
-       g:document.getElementById('gSel1'), wrap:document.getElementById('chartwrap1')},
-  '2':{x:document.getElementById('xSel2'), y:document.getElementById('ySel2'),
-       g:document.getElementById('gSel2'), wrap:document.getElementById('chartwrap2')},
-};
-let xy=[], rows=[];
-const theme = () => document.documentElement.dataset.theme || 'dark';
-window.onThemeChange = () => { if (rows.length){ drawChart('1'); drawChart('2'); } };
+const $ = id => document.getElementById(id);
+const fileInput=$('file'), fnameEl=$('fname'), statusEl=$('status');
+const resultsEl=$('results'), plotWrap=$('plotwrap');
+const fileBar=$('fileBar'), fileSel=$('fileSel'), prevBtn=$('prevBtn'), nextBtn=$('nextBtn'), fileInfo=$('fileInfo');
+const ySel=$('ySel'), xSel=$('xSel'), gSel=$('gSel'), csvBtn=$('csvBtn');
+const chartWrap=$('chartwrap'), grpChecks=$('grpChecks'), runChecks=$('runChecks');
+const tablewrap=$('tablewrap'), chipsEl=$('chips');
+const stackWrap=$('stackwrap'), stkChecks=$('stkChecks'), offset=$('offset'), offVal=$('offVal');
+const stkZoom=$('stkZoom'), stkBase=$('stkBase');
+
+let files=[];        // {name, text}
+let rows=[];         // batch rows, index-aligned with files
+let fitCache={};     // idx -> {data}|{error}  (current theme; cleared on theme switch)
+let curFit=0;
+let activeTab='analyze';
+const theme=()=>document.documentElement.dataset.theme||'dark';
 
 function setStatus(m,e=false){ statusEl.textContent=m; statusEl.className=e?'error':''; }
-function opts(sel,map){ sel.innerHTML=Object.entries(map).map(([k,v])=>`<option value="${k}">${v}</option>`).join(''); }
-for(const id of ['1','2']){ const p=panels[id]; opts(p.x,X); opts(p.y,Y); opts(p.g,G);
-  p.x.value='temperature_C'; p.g.value='carbon_type';
-  [p.x,p.y,p.g].forEach(s=>s.addEventListener('change',()=>drawChart(id))); }
-panels['1'].y.value='DG';     // default: DG% vs T
-panels['2'].y.value='Lc';     // default: Lc  vs T  (side-by-side comparison)
 function readText(f){ return new Promise((res,rej)=>{const r=new FileReader();
   r.onload=e=>res(e.target.result); r.onerror=()=>rej(new Error('read '+f.name)); r.readAsText(f);}); }
+function fillSel(sel,map,def){ const cur=sel.value;
+  sel.innerHTML=Object.entries(map).map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+  sel.value=(cur && map[cur])?cur:def; }
+function debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; }
 
-filesEl.addEventListener('change', async e=>{
+// -- tabs -------------------------------------------------------------------
+document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+function switchTab(name){
+  activeTab=name;
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='tab-'+name));
+  refreshActive();
+}
+function refreshActive(){
+  if(activeTab==='analyze'){ if(files.length) showFit(curFit); }
+  else if(activeTab==='compare'){ if(rows.length) drawCompare(); }
+  else if(activeTab==='stack'){ if(files.length) drawStack(); }
+}
+
+// -- shared upload ----------------------------------------------------------
+fileInput.addEventListener('change', async e=>{
   const fs=Array.from(e.target.files||[]); if(!fs.length) return;
-  try{ xy=await Promise.all(fs.map(async f=>({name:f.name, xy:await readText(f)}))); }
+  try{ files=await Promise.all(fs.map(async f=>({name:f.name, text:await readText(f)}))); }
   catch(err){ setStatus('Read error: '+err,true); return; }
-  fnameEl.textContent=`${xy.length} file(s) selected`; runBtn.disabled=false;
-  setStatus(`${xy.length} file(s) loaded — click Analyze runs.`);
+  fnameEl.textContent = files.length===1?files[0].name:`${files.length} files selected`;
+  fitCache={}; curFit=0;
+  await runBatch();
 });
 
-runBtn.addEventListener('click', async ()=>{
-  if(!xy.length){ setStatus('No files selected.',true); return; }
-  runBtn.disabled=true; runBtn.textContent='Working…'; setStatus(`Analyzing ${xy.length} runs (both methods)…`);
+async function runBatch(){
+  setStatus(`Analyzing ${files.length} file(s)…`);
   try{
     const resp=await fetch('/batch_analyze',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({files:xy})});
+      body:JSON.stringify({files:files.map(f=>({name:f.name, xy:f.text}))})});
     const data=await resp.json();
-    if(!resp.ok||data.error){ setStatus('Error: '+(data.error||resp.statusText),true); }
-    else { rows=data.rows; renderTable(); renderChips(); csvBtn.disabled=false;
-      await Promise.all([drawChart('1'), drawChart('2')]);
-      const ok=rows.filter(r=>!r.error).length;
-      setStatus(`Done — ${ok}/${rows.length} run(s) analyzed.`); }
+    if(!resp.ok||data.error){ setStatus('Error: '+(data.error||resp.statusText),true); return; }
+    rows=data.rows;
+    buildFileSel(); buildCompareControls(); buildStackChecks();
+    csvBtn.disabled=false;
+    const ok=rows.filter(r=>!r.error).length;
+    setStatus(`Done — ${ok}/${rows.length} file(s) analyzed.`);
+    switchTab('analyze');   // always land on the per-file fit, single or batch
   }catch(err){ setStatus('Request failed: '+err,true); }
-  finally{ runBtn.disabled=false; runBtn.textContent='Analyze runs'; }
-});
+}
 
-csvBtn.addEventListener('click', downloadCSV);
+// -- ANALYZE ----------------------------------------------------------------
+function buildFileSel(){
+  fileBar.style.display = files.length>1?'flex':'none';
+  fileSel.innerHTML = rows.map((r,i)=>{
+    const tag = r.error?'ERROR':(r.DG!=null?`DG ${r.DG.toFixed(2)}%`:'—');
+    return `<option value="${i}">${i+1}/${rows.length}  ${r.label||r.file}  —  ${tag}</option>`;
+  }).join('');
+}
+prevBtn.addEventListener('click',()=>showFit(curFit-1));
+nextBtn.addEventListener('click',()=>showFit(curFit+1));
+fileSel.addEventListener('change',()=>showFit(parseInt(fileSel.value,10)));
 
-function cell(v,dig){ if(v===null||v===undefined||v==='') return '<td class="miss">–</td>';
+async function showFit(i){
+  if(i<0||i>=files.length) return; curFit=i;
+  if(files.length>1){ fileSel.value=String(i); prevBtn.disabled=i===0; nextBtn.disabled=i===files.length-1;
+    fileInfo.textContent=`File ${i+1} of ${files.length}`; }
+  let res=fitCache[i];
+  if(!res){
+    plotWrap.innerHTML='<span class="placeholder">Rendering…</span>';
+    try{
+      const resp=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({xy:files[i].text, theme:theme()})});
+      const d=await resp.json();
+      res=(!resp.ok||d.error)?{error:(d.error||resp.statusText)}:{data:d};
+    }catch(err){ res={error:String(err)}; }
+    fitCache[i]=res;
+  }
+  const r=rows[i]||{};
+  const title=r.label||files[i].name;
+  if(res.error){ showError(title, files[i].name, res.error); return; }
+  renderResults(res.data, title, files[i].name);
+  plotWrap.innerHTML = res.data.plot_png?`<img class="plot" src="${res.data.plot_png}" alt="fit plot">`
+                                        :'<span class="placeholder">No plot.</span>';
+}
+function fileHead(title,sub){
+  return `<div class="filetitle">${title}</div>`+
+    (sub && sub!==title ? `<div class="filesub">${sub}</div>` : '');
+}
+function showError(title,sub,msg){
+  resultsEl.innerHTML=fileHead(title,sub)+
+    `<div class="placeholder" style="color:var(--red)">Analysis failed:<br><br>${msg}</div>`;
+  plotWrap.innerHTML='<span class="placeholder">No plot — analysis failed.</span>';
+}
+function row(l,v,u=''){ return `<div class="row"><span>${l}</span><span><span class="val">${v}</span>`+
+  (u?`<span class="unit">${u}</span>`:'')+`</span></div>`; }
+function peakRows(p){ return row('  xc (2θ)',p.xc.toFixed(4),'°')+row('  w (FWHM)',p.w.toFixed(4),'°')+
+  row('  μ',p.mu.toFixed(4))+row('  A (area)',p.A.toFixed(4))+row('  d-spacing',p.d_spacing_angstrom.toFixed(6),'Å'); }
+function renderResults(d, title, sub){
+  const pct=x=>(x*100).toFixed(2)+'%';
+  let h=(title?fileHead(title,sub):'')+
+    `<div class="section">${d.method_name}</div>`+
+    row('Wavelength λ',d.wavelength_angstrom.toFixed(5),'Å')+
+    `<div class="section">Graphitic peak</div>`+peakRows(d.graphitic)+
+    `<div class="section">Turbostratic peak (Lorentzian)</div>`+peakRows(d.turbostratic)+
+    `<div class="section">Result</div>`+
+    row('X_g / X_t',pct(d.area_fraction_graphitic)+' / '+pct(d.area_fraction_turbostratic))+
+    row("d′ weighted",d.d_spacing_weighted_angstrom.toFixed(6),'Å')+
+    row('Crystallite Lc',d.crystallite_height_Lc_angstrom.toFixed(2),'Å')+
+    row('fit R²',d.fit_r2.toFixed(5));
+  h+=`<div class="dgbox"><div class="cap">Degree of Graphitization</div>`+
+     `<div class="dg">${d.DG_percent.toFixed(2)} %</div><div class="cap">Maire-Mering equation</div></div>`;
+  resultsEl.innerHTML=h;
+}
+
+// -- COMPARE ----------------------------------------------------------------
+function buildCompareControls(){
+  fillSel(ySel,Y,'DG'); fillSel(xSel,X,'temperature_C'); fillSel(gSel,G,'carbon_type');
+  buildGroupToggles(); buildRunChecks();
+}
+[ySel,xSel].forEach(s=>s.addEventListener('change',drawCompare));
+gSel.addEventListener('change',()=>{ buildGroupToggles(); drawCompare(); });
+
+function ckItem(group,val,label,checked){
+  return `<label class="ck" title="${label}"><input type="checkbox" data-g="${group}" value="${val}"`+
+         (checked?' checked':'')+`>${label}</label>`;
+}
+function buildGroupToggles(){
+  const g=gSel.value;
+  if(g==='none'){ grpChecks.innerHTML='<span class="muted">No grouping</span>'; return; }
+  const vals=[...new Set(rows.map(r=>String(r[g]??'unspecified')))].sort();
+  grpChecks.innerHTML=vals.map(v=>ckItem('grp',v,v,true)).join('');
+}
+function buildRunChecks(){
+  runChecks.innerHTML=rows.map((r,i)=>ckItem('run',i,(r.label||r.file),true)).join('');
+}
+function checkedSet(el){ const s=new Set();
+  el.querySelectorAll('input:checked').forEach(c=>s.add(c.value)); return s; }
+grpChecks.addEventListener('change',drawCompare);
+runChecks.addEventListener('change',drawCompare);
+$('grpAll').onclick =()=>setAll(grpChecks,true);
+$('grpNone').onclick=()=>setAll(grpChecks,false);
+$('runAll').onclick =()=>setAll(runChecks,true);
+$('runNone').onclick=()=>setAll(runChecks,false);
+function setAll(el,on){ el.querySelectorAll('input').forEach(c=>c.checked=on); drawCompare(); }
+
+function effectiveRows(){
+  const g=gSel.value, grpOn=checkedSet(grpChecks), runOn=checkedSet(runChecks);
+  return rows.filter((r,i)=>{
+    if(!runOn.has(String(i))) return false;
+    if(g!=='none' && !grpOn.has(String(r[g]??'unspecified'))) return false;
+    return true;
+  });
+}
+async function drawCompare(){
+  if(!rows.length) return;
+  renderTable(); renderChips();
+  chartWrap.innerHTML='<div class="placeholder">Rendering…</div>';
+  try{
+    const resp=await fetch('/chart',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rows:effectiveRows(), x:xSel.value, y:ySel.value, group:gSel.value, theme:theme()})});
+    const d=await resp.json();
+    chartWrap.innerHTML = d.chart_png?`<img class="chartimg" src="${d.chart_png}" alt="comparison chart">`
+                                     :`<div class="placeholder">${d.error||'no chart'}</div>`;
+  }catch(err){ chartWrap.innerHTML=`<div class="placeholder">Request failed: ${err}</div>`; }
+}
+
+function tcell(v,dig){ if(v===null||v===undefined||v==='') return '<td class="miss">–</td>';
   return `<td>${typeof v==='number'?v.toFixed(dig):v}</td>`; }
-
 function renderTable(){
   const head=['Run','Type','C','Fe','CaCO₃','T(°C)','t(h)','Form','Wash','DG%','Lc(Å)'];
   let h='<table><thead><tr><th class="lbl">'+head[0]+'</th>'+head.slice(1).map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>';
   for(const r of rows){
     const cls=r.error?' class="err"':'';
     h+=`<tr${cls}><td class="lbl" title="${r.file}">${r.label||r.file}</td>`+
-       cell(r.carbon_type)+cell(r.carbon_ratio,0)+cell(r.fe_ratio,0)+cell(r.caco3_ratio,4)+
-       cell(r.temperature_C,0)+cell(r.time_h,0)+cell(r.form)+cell(r.wash)+
-       cell(r.DG,2)+cell(r.Lc,1)+'</tr>';
+       tcell(r.carbon_type)+tcell(r.carbon_ratio,0)+tcell(r.fe_ratio,0)+tcell(r.caco3_ratio,4)+
+       tcell(r.temperature_C,0)+tcell(r.time_h,0)+tcell(r.form)+tcell(r.wash)+
+       tcell(r.DG,2)+tcell(r.Lc,1)+'</tr>';
   }
   tablewrap.innerHTML=h+'</tbody></table>';
 }
-
 function renderChips(){
-  const count=(k)=>{ const m={}; rows.forEach(r=>{const v=r[k]??'—'; m[v]=(m[v]||0)+1;});
+  const count=k=>{ const m={}; rows.forEach(r=>{const v=r[k]??'—'; m[v]=(m[v]||0)+1;});
     return Object.entries(m).map(([v,n])=>`${v}:${n}`).join('  '); };
-  chipsEl.innerHTML = [`${rows.length} runs`, 'Carbon — '+count('carbon_type'),
-    'Form — '+count('form'), 'Temp — '+count('temperature_C')]
+  chipsEl.innerHTML=[`${rows.length} runs`,'Carbon — '+count('carbon_type'),
+    'Form — '+count('form'),'Temp — '+count('temperature_C')]
     .map(t=>`<span class="chip">${t}</span>`).join('');
 }
 
-async function drawChart(id){
-  if(!rows.length) return;
-  const p=panels[id];
-  p.wrap.innerHTML='<div class="placeholder">Rendering…</div>';
-  const resp=await fetch('/chart',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({rows, x:p.x.value, y:p.y.value, group:p.g.value, theme:theme()})});
-  const data=await resp.json();
-  if(data.chart_png) p.wrap.innerHTML=`<img class="chartimg" src="${data.chart_png}" alt="chart">`;
-  else p.wrap.innerHTML=`<div class="placeholder">${data.error||'no chart'}</div>`;
-}
-
+csvBtn.addEventListener('click',downloadCSV);
 function downloadCSV(){
   if(!rows.length) return;
   const cols=['file','carbon_type','carbon_ratio','fe_ratio','caco3_ratio',
     'temperature_C','time_h','form','wash','date','DG','Lc',
     'd_prime','graphitic_xc','turbostratic_xc','error'];
   const esc=v=>{ if(v===null||v===undefined) return '';
-    const s=String(v); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+    const s=String(v); return /[",\\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
   const lines=[cols.join(',')];
   for(const r of rows) lines.push(cols.map(c=>esc(r[c])).join(','));
-  const blob=new Blob([lines.join('\n')],{type:'text/csv'});
+  const blob=new Blob([lines.join('\\n')],{type:'text/csv'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download='xrd_runs.csv';
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
 }
-</script>
-</body>
-</html>
-"""
 
+// -- STACK ------------------------------------------------------------------
+function buildStackChecks(){
+  // default-check the first 8 to avoid an unreadable overlay of huge batches
+  stkChecks.innerHTML=files.map((f,i)=>ckItem('stk',i,(rows[i]&&rows[i].label)||f.name, i<8)).join('');
+}
+stkChecks.addEventListener('change',drawStack);
+$('stkAll').onclick =()=>setStk(true);
+$('stkNone').onclick=()=>setStk(false);
+function setStk(on){ stkChecks.querySelectorAll('input').forEach(c=>c.checked=on); drawStack(); }
+offset.addEventListener('input',()=>{ offVal.textContent=parseFloat(offset.value).toFixed(2); drawStackDebounced(); });
+stkZoom.addEventListener('change',drawStack);
+stkBase.addEventListener('change',drawStack);
+const drawStackDebounced=debounce(()=>drawStack(),220);
 
-MANUAL_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>XRD Manual DG Calculator</title>
-<style>
-  :root { --bg:#1e1e2e; --panel:#2a2a3e; --accent:#7aa2f7; --green:#9ece6a;
-          --amber:#e0af68; --text:#c0caf5; --muted:#565f89; --btn:#364a82; --btnact:#4a6296;
-          --inset:#12121e; --line:#23233a; --dgbg:#2d2038; }
-  :root[data-theme="light"] { --bg:#eef0f5; --panel:#ffffff; --accent:#3b5bdb; --green:#2f9e44;
-          --amber:#e8590c; --text:#1a1b26; --muted:#5b6170; --btn:#dbe4ff; --btnact:#bac8ff;
-          --inset:#f1f3f8; --line:#e6e8ee; --dgbg:#f3effb; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font-family:-apple-system,Helvetica,Arial,sans-serif; }
-  header { background:var(--panel); padding:14px 22px; display:flex; align-items:center;
-           gap:14px; flex-wrap:wrap; border-bottom:1px solid var(--inset); }
-  header h1 { font-size:18px; color:var(--accent); margin:0; }
-  .navlink { color:var(--amber); text-decoration:none; font-size:13px; font-weight:600;
-             padding:6px 12px; border:1px solid var(--amber); border-radius:6px; }
-  .navlink:hover { background:var(--amber); color:var(--bg); }
-  main { display:grid; grid-template-columns:minmax(300px,420px) 1fr; gap:16px; padding:16px; }
-  @media (max-width:820px){ main{ grid-template-columns:1fr; } }
-  .card { background:var(--panel); border-radius:10px; padding:18px; }
-  .card h2 { font-size:14px; color:var(--accent); margin:0 0 12px; }
-  .peakrow { display:flex; gap:10px; align-items:center; margin-bottom:10px; }
-  .peakrow label { color:var(--muted); font-size:12px; width:78px; }
-  input[type=number] { background:var(--inset); color:var(--text); border:1px solid var(--muted);
-        border-radius:6px; padding:7px 9px; font-size:13px; width:120px; }
-  .hint { color:var(--muted); font-size:12px; margin:6px 0 14px; }
-  button { background:var(--accent); color:var(--bg); font-weight:600; border:none;
-           border-radius:6px; padding:9px 18px; font-size:13px; cursor:pointer; }
-  label.tog { color:var(--text); font-size:13px; display:flex; gap:8px; align-items:center;
-              margin-bottom:14px; }
-  .section { color:var(--accent); font-size:13px; font-weight:600; margin:14px 0 6px;
-             border-bottom:1px solid var(--muted); padding-bottom:4px; }
-  .row { display:flex; justify-content:space-between; padding:3px 0; font-size:13px; }
-  .row .val { color:var(--green); font-family:monospace; font-weight:600; }
-  .dgbox { margin-top:18px; background:var(--dgbg); border-radius:10px; padding:18px; text-align:center; }
-  .dgbox .dg { color:var(--amber); font-size:38px; font-weight:700; margin:6px 0; }
-  .dgbox .cap { color:var(--muted); font-size:12px; }
-  #status { padding:8px 22px; background:var(--inset); color:var(--muted); font-size:12px; }
-  #status.error { color:#f7768e; }
-  .placeholder { color:var(--muted); text-align:center; padding:40px 0; }
-  .themebtn { background:var(--btn); color:var(--text); border:none; border-radius:6px;
-              padding:6px 11px; font-size:13px; cursor:pointer; }
-  .themebtn:hover { background:var(--btnact); }
-</style>
-<script>
-(function(){var d=document.documentElement;
-  d.dataset.theme=localStorage.getItem('xrd-theme')||'dark';
-  addEventListener('DOMContentLoaded',function(){var b=document.getElementById('themeBtn');
-    if(b)b.onclick=function(){var n=d.dataset.theme==='dark'?'light':'dark';
-      d.dataset.theme=n;localStorage.setItem('xrd-theme',n);b.textContent=n==='dark'?'◐ Light':'◑ Dark';
-      if(window.onThemeChange)window.onThemeChange(n);};
-    if(b)b.textContent=d.dataset.theme==='dark'?'◐ Light':'◑ Dark';});})();
-</script>
-</head>
-<body>
-<header>
-  <h1>Manual DG Calculator</h1>
-  <button id="themeBtn" class="themebtn"></button>
-  <a class="navlink" href="/">← Analyzer</a>
-  <a class="navlink" href="/dashboard">Dashboard →</a>
-</header>
-<main>
-  <div class="card">
-    <h2>Enter Origin fit peaks (NETL excel sheet)</h2>
-    <label class="tog"><input type="checkbox" id="two"> Two peaks (graphitic + turbostratic)</label>
-    <div class="peakrow">
-      <label>Graphitic</label>
-      <input id="xc1" type="number" step="0.0001" placeholder="xc (2θ °)">
-      <input id="a1"  type="number" step="0.0001" placeholder="area (A)">
-    </div>
-    <div class="peakrow" id="row2" style="display:none">
-      <label>Turbostratic</label>
-      <input id="xc2" type="number" step="0.0001" placeholder="xc (2θ °)">
-      <input id="a2"  type="number" step="0.0001" placeholder="area (A)">
-    </div>
-    <div class="hint">λ fixed at Cu Kα 1.54187 Å. Graphitic = higher 2θ peak.
-      One peak → DG from its d-spacing; two → area-weighted (Maire-Mering).</div>
-    <button id="calc">Calculate DG%</button>
-  </div>
-  <div class="card">
-    <h2>Result</h2>
-    <div id="out"><div class="placeholder">Enter peak values and calculate.</div></div>
-  </div>
-</main>
-<div id="status">Ready.</div>
-<script>
-const two=document.getElementById('two'), row2=document.getElementById('row2');
-const statusEl=document.getElementById('status'), out=document.getElementById('out');
-two.addEventListener('change',()=>{ row2.style.display = two.checked ? 'flex' : 'none'; });
-function setStatus(m,e=false){ statusEl.textContent=m; statusEl.className=e?'error':''; }
-function row(l,v,u=''){ return `<div class="row"><span>${l}</span><span class="val">${v}${u?' '+u:''}</span></div>`; }
-document.getElementById('calc').addEventListener('click', async ()=>{
-  const peaks=[{xc:parseFloat(document.getElementById('xc1').value),
-                area:parseFloat(document.getElementById('a1').value)}];
-  if(two.checked) peaks.push({xc:parseFloat(document.getElementById('xc2').value),
-                              area:parseFloat(document.getElementById('a2').value)});
+async function drawStack(){
+  if(!files.length) return;
+  const sel=[]; stkChecks.querySelectorAll('input:checked').forEach(c=>sel.push(parseInt(c.value,10)));
+  if(!sel.length){ stackWrap.innerHTML='<div class="placeholder">Check files to stack.</div>'; return; }
+  stackWrap.innerHTML='<div class="placeholder">Rendering…</div>';
+  try{
+    const resp=await fetch('/stack',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({files:sel.map(i=>({name:(rows[i]&&rows[i].label)||files[i].name, xy:files[i].text})),
+        offset:parseFloat(offset.value), zoom:stkZoom.checked, baseline:stkBase.checked, theme:theme()})});
+    const d=await resp.json();
+    stackWrap.innerHTML = d.stack_png?`<img class="chartimg" src="${d.stack_png}" alt="stacked spectra">`
+                                     :`<div class="placeholder">${d.error||'no plot'}</div>`;
+  }catch(err){ stackWrap.innerHTML=`<div class="placeholder">Request failed: ${err}</div>`; }
+}
+
+// -- MANUAL -----------------------------------------------------------------
+const two=$('two'), row2=$('row2'), out=$('out');
+two.addEventListener('change',()=>{ row2.style.display=two.checked?'flex':'none'; });
+function mrow(l,v,u=''){ return `<div class="row"><span>${l}</span><span class="val">${v}${u?' '+u:''}</span></div>`; }
+$('calc').addEventListener('click', async ()=>{
+  const peaks=[{xc:parseFloat($('xc1').value), area:parseFloat($('a1').value)}];
+  if(two.checked) peaks.push({xc:parseFloat($('xc2').value), area:parseFloat($('a2').value)});
   for(const p of peaks){ if(!isFinite(p.xc)||!isFinite(p.area)){ setStatus('Enter numeric xc and area for each peak.',true); return; } }
   setStatus('Calculating…');
   try{
@@ -811,17 +924,17 @@ document.getElementById('calc').addEventListener('click', async ()=>{
     const d=await r.json();
     if(!r.ok||d.error){ setStatus('Error: '+(d.error||r.statusText),true); return; }
     let h=`<div class="section">${d.method_name}</div>`+
-      row('λ', d.wavelength_angstrom.toFixed(5),'Å')+
+      mrow('λ',d.wavelength_angstrom.toFixed(5),'Å')+
       `<div class="section">Graphitic</div>`+
-      row('xc', d.graphitic.xc.toFixed(4),'°')+row('area', d.graphitic.A.toFixed(4))+
-      row('d-spacing', d.graphitic.d_spacing_angstrom.toFixed(6),'Å');
+      mrow('xc',d.graphitic.xc.toFixed(4),'°')+mrow('area',d.graphitic.A.toFixed(4))+
+      mrow('d-spacing',d.graphitic.d_spacing_angstrom.toFixed(6),'Å');
     if(d.n_peaks===2){
       h+=`<div class="section">Turbostratic</div>`+
-         row('xc', d.turbostratic.xc.toFixed(4),'°')+row('area', d.turbostratic.A.toFixed(4))+
-         row('d-spacing', d.turbostratic.d_spacing_angstrom.toFixed(6),'Å')+
+         mrow('xc',d.turbostratic.xc.toFixed(4),'°')+mrow('area',d.turbostratic.A.toFixed(4))+
+         mrow('d-spacing',d.turbostratic.d_spacing_angstrom.toFixed(6),'Å')+
          `<div class="section">Weighted</div>`+
-         row('X_g / X_t',(d.area_fraction_graphitic*100).toFixed(2)+'% / '+(d.area_fraction_turbostratic*100).toFixed(2)+'%')+
-         row("d′", d.d_spacing_weighted_angstrom.toFixed(6),'Å');
+         mrow('X_g / X_t',(d.area_fraction_graphitic*100).toFixed(2)+'% / '+(d.area_fraction_turbostratic*100).toFixed(2)+'%')+
+         mrow("d′",d.d_spacing_weighted_angstrom.toFixed(6),'Å');
     }
     h+=`<div class="dgbox"><div class="cap">Degree of Graphitization</div>`+
        `<div class="dg">${d.DG_percent.toFixed(2)} %</div>`+
@@ -829,6 +942,9 @@ document.getElementById('calc').addEventListener('click', async ()=>{
     out.innerHTML=h; setStatus('Done.');
   }catch(err){ setStatus('Request failed: '+err,true); }
 });
+
+// -- theme re-render --------------------------------------------------------
+window.onThemeChange=()=>{ fitCache={}; refreshActive(); };
 </script>
 </body>
 </html>
@@ -867,15 +983,30 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length).decode("utf-8", errors="replace"))
 
     def do_GET(self) -> None:
-        path = self.path.rstrip("/")
-        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/calc_peaks")):
+        path = self.path.split("?")[0].rstrip("/")
+        if path.startswith("/fonts/"):
+            self._serve_font(os.path.basename(path))
+        elif path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks")):
             self._send(405, "text/plain; charset=utf-8", b"Use POST for this endpoint")
-        elif "dashboard" in path:
-            self._send(200, "text/html; charset=utf-8", DASHBOARD_HTML.encode("utf-8"))
-        elif "manual" in path:
-            self._send(200, "text/html; charset=utf-8", MANUAL_HTML.encode("utf-8"))
         else:
-            self._send(200, "text/html; charset=utf-8", INDEX_HTML.encode("utf-8"))
+            # one single-page app; /dashboard and /manual kept as aliases
+            self._send(200, "text/html; charset=utf-8", PAGE_HTML.encode("utf-8"))
+
+    def _serve_font(self, name: str) -> None:
+        # Whitelist-only (no path traversal): just the bundled Google Sans weights.
+        if name not in FONT_FILES:
+            self._send(404, "text/plain; charset=utf-8", b"font not found")
+            return
+        with open(os.path.join(FONT_DIR, name), "rb") as fh:
+            body = fh.read()
+        ctype = "font/otf" if name.endswith(".otf") else "font/ttf"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:
         path = self.path.rstrip("/")
@@ -895,6 +1026,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_batch()
             elif path.endswith("/chart"):
                 self._handle_chart()
+            elif path.endswith("/stack"):
+                self._handle_stack()
             elif path.endswith("/calc_peaks"):
                 self._handle_calc_peaks()
             else:
@@ -942,6 +1075,20 @@ class Handler(BaseHTTPRequestHandler):
                                      payload.get("group", "carbon_type"),
                                      payload.get("theme", "dark"))
         self._send(200, "application/json", json.dumps({"chart_png": png}).encode("utf-8"))
+
+    def _handle_stack(self) -> None:
+        payload = self._read_json()
+        files = payload.get("files", [])
+        if len(files) > MAX_BATCH_FILES:
+            raise ValueError(
+                f"too many files to stack ({len(files)}); limit is {MAX_BATCH_FILES}")
+        window = (24.0, 30.0) if payload.get("zoom") else None
+        png = render_stack(files,
+                           float(payload.get("offset", 0.25)),
+                           payload.get("theme", "dark"),
+                           bool(payload.get("baseline", False)),
+                           window)
+        self._send(200, "application/json", json.dumps({"stack_png": png}).encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------

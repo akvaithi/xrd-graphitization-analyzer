@@ -25,6 +25,9 @@ RUN mkdir -p "$MPLCONFIGDIR" \
 from matplotlib.figure import Figure; import io; \
 f=Figure(); f.add_subplot(111).plot([0,1],[1,0]); f.savefig(io.BytesIO(), format='png')"
 
+# Bundled SF Pro Text — own layer so code edits don't re-copy the font files.
+COPY fonts/ ./fonts/
+
 # Application code (last, so edits don't bust the dependency/cache layers).
 COPY xrd_analyzer.py xrd_webgui.py run_parser.py ./
 

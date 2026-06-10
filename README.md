@@ -50,28 +50,28 @@ python3 xrd_webgui.py            # serves http://127.0.0.1:8000
 python3 xrd_webgui.py --port 8642
 ```
 
-Three pages (linked in the header):
-- **Analyzer** — upload `.xy` file(s); each is run through the standard pipeline
-  with a high-resolution fit plot (raw points + deconvolved peaks); multiple
-  files are paged.
-- **Run Dashboard** — multi-file parameter extraction, table, comparison charts, CSV.
-- **Manual Calc** — enter 1 or 2 Origin peaks (`xc` + `area`) and get DG exactly
-  like the NETL excel sheet.
-
-Choose one or more `.xy` files and click **Analyze**. The server honours `$PORT`/`$HOST` (binds
+**One page, one shared upload, four tabs.** Choose `.xy` file(s) once in the
+header — analysis runs automatically and the same files feed every tab (the
+switch is seamless, no re-upload). The server honours `$PORT`/`$HOST` (binds
 `0.0.0.0` when `$PORT` is set), so it runs unchanged on container hosts.
 
-### Run Dashboard
+- **Analyze** — per-file standard-pipeline fit with a high-resolution plot (raw
+  points + deconvolved peaks); page through files with the run selector.
+- **Compare** — parsed-parameter table + **one** comparison chart. Pick X / Y /
+  colour-by, then add or remove points with **per-group and per-run checkboxes**
+  (e.g. hide a whole carbon type or a single outlier run). The trend line follows
+  the mean at each X value so replicates don't zig-zag. Download CSV.
+- **Stack spectra** — overlay the raw intensities of any checked files on one
+  plot to compare **peak heights**. An **offset slider** goes from a flat overlay
+  (0) to a waterfall; optional (002) zoom and linear baseline subtraction.
+- **Manual calc** — enter 1 or 2 Origin peaks (`xc` + `area`) → DG exactly like
+  the NETL excel sheet.
 
-A second page (**Run Dashboard →**) analyses many runs at once and graphs them
-against their synthesis parameters. Run parameters are extracted from the (often
+Run parameters for the Compare table/chart are extracted from the (often
 non-standard) **file names** — carbon type (GPC/CPC), carbon/Fe/CaCO₃ ratios,
 temperature, dwell time, sample form (puck/powder), and wash state — by a
 tolerant regex parser ([run_parser.py](run_parser.py)) that doesn't care about
-separator or casing. The dashboard then shows a parsed-runs table and an
-interactive comparison chart (e.g. **DG% vs Temperature, grouped by carbon
-type**) with selectable X / Y / grouping; the trend line follows the mean at
-each X value so replicate runs don't create zig-zags.
+separator or casing.
 
 ## Deploy
 
