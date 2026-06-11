@@ -9,8 +9,7 @@ __pycache__/
 .venv/
 venv/
 
-# Vercel / build
-.vercel/
+# Node / build
 node_modules/
 
 # PyInstaller desktop-app build outputs
@@ -23,7 +22,6 @@ dist/
 
 # OS
 .DS_Store
-.vercel
 
 # Private research data (not for the repo)
 test/

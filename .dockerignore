@@ -5,9 +5,6 @@ __pycache__/
 data/
 *.xy
 *.brml
-.vercel/
 node_modules/
 .DS_Store
-render.yaml
-Procfile
 README.md
