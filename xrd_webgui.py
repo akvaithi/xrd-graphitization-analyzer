@@ -452,7 +452,7 @@ PAGE_HTML = """<!DOCTYPE html>
 
   .panel { display:none; padding:20px; max-width:1240px; margin:0 auto; }
   .panel.active { display:block; }
-  .grid2 { display:grid; grid-template-columns:minmax(320px,400px) 1fr; gap:18px; }
+  .grid2 { display:grid; grid-template-columns:minmax(320px,400px) 1fr; gap:18px; align-items:start; }
   @media (max-width:900px){ .grid2{ grid-template-columns:1fr; } }
   .grid-chart { display:grid; grid-template-columns:1fr 260px; gap:18px; align-items:start; }
   @media (max-width:840px){ .grid-chart{ grid-template-columns:1fr; } }
@@ -466,6 +466,7 @@ PAGE_HTML = """<!DOCTYPE html>
   .filetitle { font-family:var(--font-display); font-size:16px; font-weight:600; letter-spacing:-0.01em;
                color:var(--label); margin:0 0 2px; line-height:1.3; word-break:break-word; }
   .filesub { color:var(--label3); font-size:11px; margin:0 0 14px; word-break:break-all; }
+  .hsub { color:var(--label2); font-size:12px; font-weight:400; }
   .section { color:var(--label2); font-size:11px; font-weight:600; letter-spacing:0.04em;
              text-transform:uppercase; margin:18px 0 6px; padding-bottom:5px;
              border-bottom:0.5px solid var(--sep); }
@@ -477,6 +478,7 @@ PAGE_HTML = """<!DOCTYPE html>
   .row .unit { color:var(--label2); font-size:11px; margin-left:4px; font-weight:400; }
 
   /* DG callout */
+  .dgbox.dgtop { margin-top:0; margin-bottom:18px; }
   .dgbox { margin-top:20px; background:color-mix(in srgb, var(--accent) 12%, var(--card));
            border:0.5px solid color-mix(in srgb, var(--accent) 30%, transparent);
            border-radius:14px; padding:20px; text-align:center; }
@@ -487,6 +489,21 @@ PAGE_HTML = """<!DOCTYPE html>
   img.plot, img.chartimg { width:100%; border-radius:10px; display:block; }
   #plotwrap, #chartwrap, #stackwrap { display:flex; align-items:center; justify-content:center;
             min-height:340px; color:var(--label2); }
+  /* empty Analyze cards match heights; once analysed, cards size to content (no big void) */
+  #results > .placeholder { min-height:340px; display:flex; align-items:center; justify-content:center; padding:0; }
+
+  /* Category filter pills */
+  .filters { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+  .filtergrp { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .filterlbl { color:var(--label2); font-size:11px; font-weight:600; letter-spacing:0.04em;
+               text-transform:uppercase; width:48px; flex:0 0 auto; }
+  .filterpill { font-size:12px; font-weight:500; padding:3px 12px; border-radius:14px;
+                background:var(--fill); color:var(--label2); }
+  .filterpill:hover { background:var(--fill2); }
+  .filterpill.active { background:var(--accent); color:var(--on-accent); }
+  .runlink { color:var(--accent); cursor:pointer; text-decoration:none; }
+  .runlink:hover { text-decoration:underline; }
+  th.ck-col, td.ck-col { width:30px; text-align:center; padding-left:6px; padding-right:6px; }
 
   .filebar { display:flex; align-items:center; gap:10px; margin-bottom:16px; font-size:13px; }
   .filebar button { padding:5px 12px; }
@@ -522,7 +539,7 @@ PAGE_HTML = """<!DOCTYPE html>
   th, td { padding:7px 10px; text-align:right; border-bottom:0.5px solid var(--sep);
            white-space:nowrap; font-variant-numeric:tabular-nums; }
   th { color:var(--label2); font-weight:600; position:sticky; top:0; background:var(--card); }
-  td.lbl, th.lbl { text-align:left; max-width:260px; overflow:hidden; text-overflow:ellipsis;
+  td.lbl, th.lbl { text-align:left; min-width:230px; white-space:normal;
                    font-variant-numeric:normal; }
   td.miss { color:var(--label3); }
   tr.err td { color:var(--red); }
@@ -589,18 +606,11 @@ PAGE_HTML = """<!DOCTYPE html>
       <label>Color by <select id="gSel"></select></label>
       <button id="csvBtn" class="mini" disabled>Download CSV</button>
     </div>
-    <div class="grid-chart">
-      <div id="chartwrap"><div class="placeholder">Upload runs to compare.</div></div>
-      <div class="checks">
-        <div class="checkhdr">Groups <span><a id="grpAll">all</a> · <a id="grpNone">none</a></span></div>
-        <div id="grpChecks" class="checklist"></div>
-        <div class="checkhdr">Runs <span><a id="runAll">all</a> · <a id="runNone">none</a></span></div>
-        <div id="runChecks" class="checklist"></div>
-      </div>
-    </div>
+    <div id="filters" class="filters"></div>
+    <div id="chartwrap"><div class="placeholder">Upload runs to compare.</div></div>
   </div>
   <div class="card">
-    <h2>Parsed runs &amp; results</h2>
+    <h2>Parsed runs &amp; results <span class="hsub">— tick to include in the chart · click a run name to open its fit</span></h2>
     <div id="chips" class="chips"></div>
     <div id="tablewrap"><div class="placeholder">Parsed run parameters appear here.</div></div>
   </div>
@@ -610,8 +620,8 @@ PAGE_HTML = """<!DOCTYPE html>
 <section id="tab-stack" class="panel">
   <div class="card">
     <div class="ctrls">
-      <label>Offset <input id="offset" type="range" min="0" max="1" step="0.05" value="0.25">
-        <span id="offVal" class="muted">0.25</span></label>
+      <label>Offset <input id="offset" type="range" min="0" max="1" step="0.05" value="0">
+        <span id="offVal" class="muted">0.00</span></label>
       <label class="tog"><input type="checkbox" id="stkZoom"> Zoom (002) 24–30°</label>
       <label class="tog"><input type="checkbox" id="stkBase"> Baseline subtract</label>
     </div>
@@ -666,7 +676,7 @@ const fileInput=$('file'), fnameEl=$('fname'), statusEl=$('status');
 const resultsEl=$('results'), plotWrap=$('plotwrap');
 const fileBar=$('fileBar'), fileSel=$('fileSel'), prevBtn=$('prevBtn'), nextBtn=$('nextBtn'), fileInfo=$('fileInfo');
 const ySel=$('ySel'), xSel=$('xSel'), gSel=$('gSel'), csvBtn=$('csvBtn');
-const chartWrap=$('chartwrap'), grpChecks=$('grpChecks'), runChecks=$('runChecks');
+const chartWrap=$('chartwrap'), filtersEl=$('filters');
 const tablewrap=$('tablewrap'), chipsEl=$('chips');
 const stackWrap=$('stackwrap'), stkChecks=$('stkChecks'), offset=$('offset'), offVal=$('offVal');
 const stkZoom=$('stkZoom'), stkBase=$('stkBase');
@@ -776,6 +786,8 @@ function peakRows(p){ return row('  xc (2θ)',p.xc.toFixed(4),'°')+row('  w (FW
 function renderResults(d, title, sub){
   const pct=x=>(x*100).toFixed(2)+'%';
   let h=(title?fileHead(title,sub):'')+
+    `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization</div>`+
+    `<div class="dg">${d.DG_percent.toFixed(2)} %</div><div class="cap">Maire-Mering equation</div></div>`+
     `<div class="section">${d.method_name}</div>`+
     row('Wavelength λ',d.wavelength_angstrom.toFixed(5),'Å')+
     `<div class="section">Graphitic peak</div>`+peakRows(d.graphitic)+
@@ -785,53 +797,58 @@ function renderResults(d, title, sub){
     row("d′ weighted",d.d_spacing_weighted_angstrom.toFixed(6),'Å')+
     row('Crystallite Lc',d.crystallite_height_Lc_angstrom.toFixed(2),'Å')+
     row('fit R²',d.fit_r2.toFixed(5));
-  h+=`<div class="dgbox"><div class="cap">Degree of Graphitization</div>`+
-     `<div class="dg">${d.DG_percent.toFixed(2)} %</div><div class="cap">Maire-Mering equation</div></div>`;
   resultsEl.innerHTML=h;
 }
 
 // -- COMPARE ----------------------------------------------------------------
+const FILTER_FIELDS = {carbon_type:'Type', form:'Form', wash:'Wash'};
 function buildCompareControls(){
   fillSel(ySel,Y,'DG'); fillSel(xSel,X,'temperature_C'); fillSel(gSel,G,'carbon_type');
-  buildGroupToggles(); buildRunChecks();
+  buildFilters(); renderTable(); renderChips(); syncPills();
 }
-[ySel,xSel].forEach(s=>s.addEventListener('change',drawCompare));
-gSel.addEventListener('change',()=>{ buildGroupToggles(); drawCompare(); });
+[ySel,xSel,gSel].forEach(s=>s.addEventListener('change',drawCompare));
 
+// reusable checkbox-row item (still used by the Stack tab)
 function ckItem(group,val,label,checked){
   return `<label class="ck" title="${label}"><input type="checkbox" data-g="${group}" value="${val}"`+
          (checked?' checked':'')+`>${label}</label>`;
 }
-function buildGroupToggles(){
-  const g=gSel.value;
-  if(g==='none'){ grpChecks.innerHTML='<span class="muted">No grouping</span>'; return; }
-  const vals=[...new Set(rows.map(r=>String(r[g]??'unspecified')))].sort();
-  grpChecks.innerHTML=vals.map(v=>ckItem('grp',v,v,true)).join('');
-}
-function buildRunChecks(){
-  runChecks.innerHTML=rows.map((r,i)=>ckItem('run',i,(r.label||r.file),true)).join('');
-}
-function checkedSet(el){ const s=new Set();
-  el.querySelectorAll('input:checked').forEach(c=>s.add(c.value)); return s; }
-grpChecks.addEventListener('change',drawCompare);
-runChecks.addEventListener('change',drawCompare);
-$('grpAll').onclick =()=>setAll(grpChecks,true);
-$('grpNone').onclick=()=>setAll(grpChecks,false);
-$('runAll').onclick =()=>setAll(runChecks,true);
-$('runNone').onclick=()=>setAll(runChecks,false);
-function setAll(el,on){ el.querySelectorAll('input').forEach(c=>c.checked=on); drawCompare(); }
 
-function effectiveRows(){
-  const g=gSel.value, grpOn=checkedSet(grpChecks), runOn=checkedSet(runChecks);
-  return rows.filter((r,i)=>{
-    if(!runOn.has(String(i))) return false;
-    if(g!=='none' && !grpOn.has(String(r[g]??'unspecified'))) return false;
-    return true;
+// category filters — a toggle pill per distinct value of each categorical field
+function buildFilters(){
+  let html='';
+  for(const [f,lbl] of Object.entries(FILTER_FIELDS)){
+    const vals=[...new Set(rows.map(r=>r[f]).filter(v=>v!==null&&v!==undefined&&v!==''))].sort();
+    if(vals.length<2) continue;                       // nothing to filter on
+    html+=`<div class="filtergrp"><span class="filterlbl">${lbl}</span>`+
+      vals.map(v=>`<button class="filterpill active" data-f="${f}" data-v="${v}">${v}</button>`).join('')+`</div>`;
+  }
+  filtersEl.innerHTML = html || '<span class="muted">No categorical fields to filter.</span>';
+}
+// Pills and the table checkboxes are ONE control: a pill bulk-toggles every row
+// of that value, and pill state mirrors whether any such row is still checked.
+function rowBox(i){ return tablewrap.querySelector(`.rowck[data-i="${i}"]`); }
+filtersEl.addEventListener('click', e=>{ const b=e.target.closest('.filterpill');
+  if(!b) return;
+  const want=!b.classList.contains('active'), f=b.dataset.f, v=b.dataset.v;
+  rows.forEach((r,i)=>{ if(String(r[f]??'')===v){ const c=rowBox(i); if(c) c.checked=want; } });
+  syncPills(); drawCompare();
+});
+function syncPills(){
+  filtersEl.querySelectorAll('.filterpill').forEach(b=>{
+    const f=b.dataset.f, v=b.dataset.v;
+    const anyOn=rows.some((r,i)=>{ const c=rowBox(i); return c && c.checked && String(r[f]??'')===v; });
+    b.classList.toggle('active', anyOn);
   });
+  const all=tablewrap.querySelector('#rowAll'), boxes=[...tablewrap.querySelectorAll('.rowck')];
+  if(all) all.checked = boxes.length>0 && boxes.every(c=>c.checked);
+}
+function effectiveRows(){
+  const on=new Set([...tablewrap.querySelectorAll('.rowck:checked')].map(c=>c.dataset.i));
+  return rows.filter((r,i)=> on.has(String(i)));
 }
 async function drawCompare(){
   if(!rows.length) return;
-  renderTable(); renderChips();
   chartWrap.innerHTML='<div class="placeholder">Rendering…</div>';
   try{
     const resp=await fetch('/chart',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -842,20 +859,32 @@ async function drawCompare(){
   }catch(err){ chartWrap.innerHTML=`<div class="placeholder">Request failed: ${err}</div>`; }
 }
 
+// the table itself is the per-run selector: tick to include, click a name → its fit
 function tcell(v,dig){ if(v===null||v===undefined||v==='') return '<td class="miss">–</td>';
   return `<td>${typeof v==='number'?v.toFixed(dig):v}</td>`; }
 function renderTable(){
-  const head=['Run','Type','C','Fe','CaCO₃','T(°C)','t(h)','Form','Wash','DG%','Lc(Å)'];
-  let h='<table><thead><tr><th class="lbl">'+head[0]+'</th>'+head.slice(1).map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>';
-  for(const r of rows){
+  const head=['Type','C','Fe','CaCO₃','T(°C)','t(h)','Form','Wash','DG%','Lc(Å)'];
+  let h='<table><thead><tr><th class="ck-col"><input type="checkbox" id="rowAll" checked></th>'+
+        '<th class="lbl">Run</th>'+head.map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>';
+  rows.forEach((r,i)=>{
     const cls=r.error?' class="err"':'';
-    h+=`<tr${cls}><td class="lbl" title="${r.file}">${r.label||r.file}</td>`+
+    h+=`<tr${cls}><td class="ck-col"><input type="checkbox" class="rowck" data-i="${i}" checked></td>`+
+       `<td class="lbl"><a class="runlink" data-i="${i}" title="${r.file}">${r.label||r.file}</a></td>`+
        tcell(r.carbon_type)+tcell(r.carbon_ratio,0)+tcell(r.fe_ratio,0)+tcell(r.caco3_ratio,4)+
        tcell(r.temperature_C,0)+tcell(r.time_h,0)+tcell(r.form)+tcell(r.wash)+
        tcell(r.DG,2)+tcell(r.Lc,1)+'</tr>';
-  }
+  });
   tablewrap.innerHTML=h+'</tbody></table>';
 }
+tablewrap.addEventListener('change', e=>{
+  if(e.target.id==='rowAll'){ tablewrap.querySelectorAll('.rowck').forEach(c=>c.checked=e.target.checked); }
+  else if(!e.target.classList.contains('rowck')) return;
+  syncPills(); drawCompare();
+});
+tablewrap.addEventListener('click', e=>{ const a=e.target.closest('.runlink');
+  if(a){ e.preventDefault(); openRun(parseInt(a.dataset.i,10)); } });
+function openRun(i){ curFit=i; switchTab('analyze'); }   // refreshActive renders showFit(curFit)
+
 function renderChips(){
   const count=k=>{ const m={}; rows.forEach(r=>{const v=r[k]??'—'; m[v]=(m[v]||0)+1;});
     return Object.entries(m).map(([v,n])=>`${v}:${n}`).join('  '); };
