@@ -137,13 +137,6 @@ docker build -t xrd-analyzer .
 docker run -d --restart unless-stopped -p 8000:8000 xrd-analyzer
 ```
 
-### Render (managed)
-
-A `render.yaml` blueprint + `Procfile` are included; a connected repo auto-deploys
-on each push. Note the **free tier is 512 MB RAM**, which can OOM under the
-scipy/matplotlib + plot-rendering workload — prefer Coolify/Docker on a larger
-host. The same `Procfile` works on Railway/Heroku-style hosts.
-
 ## Limits / hardening
 
 The web server applies basic abuse/DoS protection (no login — front it with
