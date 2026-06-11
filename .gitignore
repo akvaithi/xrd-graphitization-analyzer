@@ -13,6 +13,11 @@ venv/
 .vercel/
 node_modules/
 
+# PyInstaller desktop-app build outputs
+build/
+dist/
+*.build-venv/
+
 # matplotlib cache
 .matplotlib/
 

@@ -28,6 +28,7 @@ import base64
 import io
 import json
 import os
+import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,9 +41,11 @@ matplotlib.use("Agg")
 from matplotlib import font_manager
 from matplotlib.figure import Figure
 
-# Self-hosted SF Pro Text — bundled in ./fonts so plot text and the UI share the
-# same typeface and it works offline / in the slim container.
-FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+# Self-hosted SF Pro — bundled in ./fonts so plot text and the UI share the same
+# typeface and it works offline / in the slim container. When frozen by
+# PyInstaller the data files live under sys._MEIPASS, not next to this file.
+_BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+FONT_DIR = os.path.join(_BASE_DIR, "fonts")
 FONT_FILES = {
     "SF-Pro-Text-Regular.otf", "SF-Pro-Text-Medium.otf",
     "SF-Pro-Text-Semibold.otf", "SF-Pro-Text-Bold.otf",

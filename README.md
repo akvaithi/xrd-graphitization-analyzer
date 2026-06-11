@@ -73,6 +73,28 @@ temperature, dwell time, sample form (puck/powder), and wash state — by a
 tolerant regex parser ([run_parser.py](run_parser.py)) that doesn't care about
 separator or casing.
 
+## Desktop app (macOS .app / Windows .exe)
+
+For lab users who don't want Docker or Python: download the prebuilt app from the
+[Releases](https://github.com/akvaithi/xrd-graphitization-analyzer/releases) page
+and double-click. It starts the analyzer locally, opens it in your browser, and
+sits in the **menu bar (macOS) / system tray (Windows)** — click the icon to
+re-open or **Quit**. Everything runs on your machine; no internet, no install.
+
+> First launch is unsigned, so the OS will warn:
+> - **macOS:** right-click the app → **Open** (once), or `xattr -dr com.apple.quarantine "XRD Graphitization Analyzer.app"`.
+> - **Windows:** *More info → Run anyway* on the SmartScreen prompt.
+
+Build it yourself (PyInstaller; can't cross-compile, so build each OS on that OS):
+
+```bash
+pip install -r requirements.txt -r requirements-build.txt
+pyinstaller packaging/xrd.spec --noconfirm        # → dist/
+```
+
+`.github/workflows/build-apps.yml` builds both on GitHub's macOS + Windows
+runners on demand and attaches the zips to the matching version tag's release.
+
 ## Deploy
 
 The scipy/matplotlib stack wants real RAM, so a container on your own host is the
