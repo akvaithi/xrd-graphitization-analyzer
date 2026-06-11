@@ -8,6 +8,9 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}   # → ghcr.io/akvaithi/xrd-graphitization-analyzer
+  # Run JS-based actions on Node 24 (GitHub forces this by 2026-06-16). The Docker
+  # actions still ship Node 20 under their current major tags; this opts them in.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-and-push:
@@ -17,7 +20,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
