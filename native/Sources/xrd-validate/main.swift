@@ -16,10 +16,15 @@ if args[1] == "--name", args.count >= 3 {
 
 // --ai <file.xy> : full AI-suggested deconvolution → deterministic fit → DG.
 if args[1] == "--ai", args.count >= 3 {
-    let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+    let env = ProcessInfo.processInfo.environment
+    let key = env["ANTHROPIC_API_KEY"] ?? ""
+    let provider = AISuggester.Provider(rawValue: (env["AI_PROVIDER"] ?? "claude").lowercased()) ?? .claude
+    let host = env["OLLAMA_HOST"] ?? "http://localhost:11434"
+    let model = env["AI_MODEL"]
     do {
         let pattern = try XRDPattern.parse(contentsOf: URL(fileURLWithPath: args[2]))
-        let (s, _) = try await AISuggester.suggest(pattern, apiKey: key)
+        let (s, _) = try await AISuggester.suggest(pattern, provider: provider, model: model,
+                                                   apiKey: key, ollamaHost: host)
         var o = FitOptions()
         o.peakCount = s.peakCount
         o.subtractBackground = s.subtractBackground

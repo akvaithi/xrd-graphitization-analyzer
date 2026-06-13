@@ -12,7 +12,10 @@ struct DetailView: View {
     @State private var fitError: String?
 
     // AI assist
+    @State private var aiProvider: AISuggester.Provider =
+        (ProcessInfo.processInfo.environment["AI_PROVIDER"].flatMap { AISuggester.Provider(rawValue: $0.lowercased()) }) ?? .claude
     @State private var apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
+    @State private var ollamaHost = ProcessInfo.processInfo.environment["OLLAMA_HOST"] ?? "http://localhost:11434"
     @State private var aiBusy = false
     @State private var aiNote: String?
     @State private var aiConfidence: Double?
@@ -180,13 +183,21 @@ struct DetailView: View {
                             .background((c < 0.8 ? Color.orange : Color.green).opacity(0.22), in: Capsule())
                     }
                 }
-                if apiKey.isEmpty {
+                Picker("", selection: $aiProvider) {
+                    Text("Claude (cloud)").tag(AISuggester.Provider.claude)
+                    Text("Ollama (local)").tag(AISuggester.Provider.ollama)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                if aiProvider == .claude && apiKey.isEmpty {
                     SecureField("ANTHROPIC_API_KEY", text: $apiKey)
+                        .textFieldStyle(.roundedBorder).font(.caption)
+                } else if aiProvider == .ollama {
+                    TextField("Ollama host", text: $ollamaHost)
                         .textFieldStyle(.roundedBorder).font(.caption)
                 }
                 HStack {
                     Button { runAI() } label: { Label("Suggest deconvolution", systemImage: "wand.and.stars") }
-                        .disabled(apiKey.isEmpty || aiBusy || file.pattern == nil)
+                        .disabled(aiBusy || file.pattern == nil || (aiProvider == .claude && apiKey.isEmpty))
                     if aiBusy { ProgressView().controlSize(.small) }
                 }
                 if let note = aiNote {
@@ -194,7 +205,9 @@ struct DetailView: View {
                         .foregroundStyle((aiConfidence ?? 1) < 0.8 ? .orange : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Sends derived numeric features (not your raw data) to the Anthropic API; you confirm the result. DG% is always computed locally.")
+                Text(aiProvider == .ollama
+                     ? "Runs locally via Ollama — nothing leaves your machine. You confirm the result; DG% is computed locally."
+                     : "Sends derived numeric features (not raw data) to the Anthropic API; you confirm the result. DG% is computed locally.")
                     .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 4)
@@ -204,10 +217,11 @@ struct DetailView: View {
     private func runAI() {
         guard let p = file.pattern else { return }
         aiBusy = true; aiNote = nil; aiConfidence = nil
-        let key = apiKey
+        let provider = aiProvider, key = apiKey, host = ollamaHost
         Task {
             do {
-                let (s, feats) = try await AISuggester.suggest(p, apiKey: key)
+                let (s, feats) = try await AISuggester.suggest(
+                    p, provider: provider, apiKey: key, ollamaHost: host)
                 await MainActor.run {
                     aiConfidence = s.confidence
                     if s.amorphousInvalid {
