@@ -95,6 +95,36 @@ pyinstaller packaging/xrd.spec --noconfirm        # → dist/
 `.github/workflows/build-apps.yml` builds both on GitHub's macOS + Windows
 runners on demand and attaches the zips to the matching version tag's release.
 
+## Native macOS app ([native/](native/))
+
+A true native SwiftUI app (no browser, no local server) with the **DG pipeline
+ported to pure Swift** — a bounded Levenberg–Marquardt Pseudo-Voigt fit (free
+`y0`, free-μ graphitic + μ=1 turbostratic), validated to reproduce the Python /
+NETL numbers (peak positions identical; DG within the method's own uncertainty).
+The **Analyze** tab is interactive and human-in-the-loop: toggle 1/2 peaks, drag
+the turbostratic shoulder, optional background — the deconvolution the NETL
+procedure asks a human to make. With the turbostratic position supplied it
+reproduces the postdoc gold standard to ~0.43% DG MAE.
+
+```bash
+cd native && ./scripts/make-app.sh        # → .build/"XRD Graphitization Analyzer.app"
+open ".build/XRD Graphitization Analyzer.app"
+```
+
+**AI assist (optional, opt-in).** A "Suggest deconvolution" button asks an LLM
+(Claude) to choose the setup — peak count, turbostratic position, background —
+which the human then confirms; **DG% is always computed locally** by the Swift
+engine. It sends *derived numeric features*, not raw data, and only runs when an
+`ANTHROPIC_API_KEY` is provided (env var or the in-app field). Validated at
+~0.94% DG MAE vs the gold standard (beats fully-automatic 1.16%; expert 0.43%).
+Every (features → suggestion → human-confirmed result) triple is logged to
+`~/Library/Application Support/XRD Graphitization Analyzer/decisions.jsonl` — the
+labeled dataset for future tuning. Low-confidence calls are flagged for review.
+
+> Sending data (even derived features) to a third-party API is a research-data
+> decision — confirm with your PI / funding terms before using AI assist on
+> ARPA-E/NETL samples.
+
 ## Deploy
 
 The scipy/matplotlib stack wants real RAM, so a container on your own host is the
