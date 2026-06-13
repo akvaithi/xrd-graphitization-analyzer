@@ -13,9 +13,9 @@ APP_NAME = "XRD Graphitization Analyzer"
 # everything to ROOT so the build works regardless of the invocation cwd.
 ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
 
-# Bundle the fonts + matplotlib's data (mpl-data); numpy/scipy/matplotlib are
-# pulled in automatically by PyInstaller's maintained hooks.
-datas = [(os.path.join(ROOT, "fonts"), "fonts")] + collect_data_files("matplotlib")
+# Bundle matplotlib's data (mpl-data); numpy/scipy/matplotlib are pulled in
+# automatically by PyInstaller's maintained hooks. No proprietary fonts shipped.
+datas = collect_data_files("matplotlib")
 hiddenimports = ["xrd_webgui", "xrd_analyzer", "run_parser"]
 
 a = Analysis(

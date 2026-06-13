@@ -38,30 +38,11 @@ import numpy as np
 # Headless backend — set before importing pyplot/Figure
 import matplotlib
 matplotlib.use("Agg")
-from matplotlib import font_manager
 from matplotlib.figure import Figure
 
-# Self-hosted SF Pro — bundled in ./fonts so plot text and the UI share the same
-# typeface and it works offline / in the slim container. When frozen by
-# PyInstaller the data files live under sys._MEIPASS, not next to this file.
-_BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-FONT_DIR = os.path.join(_BASE_DIR, "fonts")
-FONT_FILES = {
-    "SF-Pro-Text-Regular.otf", "SF-Pro-Text-Medium.otf",
-    "SF-Pro-Text-Semibold.otf", "SF-Pro-Text-Bold.otf",
-    "SF-Pro-Display-Regular.otf", "SF-Pro-Display-Semibold.otf",
-}
-for _fname in FONT_FILES:
-    _fpath = os.path.join(FONT_DIR, _fname)
-    if os.path.exists(_fpath):
-        try:
-            font_manager.fontManager.addfont(_fpath)
-        except Exception:  # noqa: BLE001 — fall back to DejaVu if a file is bad
-            pass
-# Prefer SF Pro Text for plot text; matplotlib falls back to DejaVu if unavailable.
+# Plot text uses a clean open sans-serif (no bundled/proprietary fonts shipped).
 matplotlib.rcParams["font.family"] = "sans-serif"
-matplotlib.rcParams["font.sans-serif"] = ["SF Pro Text", "DejaVu Sans",
-                                          "Helvetica", "Arial"]
+matplotlib.rcParams["font.sans-serif"] = ["DejaVu Sans", "Helvetica", "Arial"]
 
 from xrd_analyzer import (
     ANALYSIS_WINDOW,
@@ -365,14 +346,8 @@ PAGE_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XRD Graphitization Analyzer</title>
 <style>
-  /* Self-hosted SF Pro (OTF) — bundled; no external request, works offline.
-     HIG: SF Pro Text for body (≤19pt), SF Pro Display for large headings (≥20pt). */
-  @font-face { font-family:'SF Pro Text'; font-weight:400; src:url('/fonts/SF-Pro-Text-Regular.otf') format('opentype'); font-display:swap; }
-  @font-face { font-family:'SF Pro Text'; font-weight:500; src:url('/fonts/SF-Pro-Text-Medium.otf') format('opentype'); font-display:swap; }
-  @font-face { font-family:'SF Pro Text'; font-weight:600; src:url('/fonts/SF-Pro-Text-Semibold.otf') format('opentype'); font-display:swap; }
-  @font-face { font-family:'SF Pro Text'; font-weight:700; src:url('/fonts/SF-Pro-Text-Bold.otf') format('opentype'); font-display:swap; }
-  @font-face { font-family:'SF Pro Display'; font-weight:400; src:url('/fonts/SF-Pro-Display-Regular.otf') format('opentype'); font-display:swap; }
-  @font-face { font-family:'SF Pro Display'; font-weight:600; src:url('/fonts/SF-Pro-Display-Semibold.otf') format('opentype'); font-display:swap; }
+  /* System UI font stack — renders as SF Pro on macOS/iOS, Segoe UI on Windows,
+     Roboto on Android/ChromeOS. Nothing bundled, nothing proprietary shipped. */
 
   /* macOS semantic colour system (Apple HIG) — light is the default appearance */
   :root {
@@ -385,8 +360,8 @@ PAGE_HTML = """<!DOCTYPE html>
     --green:#34c759; --red:#ff3b30; --orange:#ff9500;
     --shadow:0 1px 2px rgba(0,0,0,0.10), 0 6px 18px rgba(0,0,0,0.06);
     --focus:rgba(0,122,255,0.45);
-    --font-text:'SF Pro Text',-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;
-    --font-display:'SF Pro Display',var(--font-text);
+    --font-text:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --font-display:var(--font-text);
   }
   :root[data-theme="dark"] {
     --bg:#1c1c1e; --bg2:#000000; --card:#2c2c2e;
@@ -1016,29 +991,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.split("?")[0].rstrip("/")
-        if path.startswith("/fonts/"):
-            self._serve_font(os.path.basename(path))
-        elif path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks")):
+        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks")):
             self._send(405, "text/plain; charset=utf-8", b"Use POST for this endpoint")
         else:
             # one single-page app; /dashboard and /manual kept as aliases
             self._send(200, "text/html; charset=utf-8", PAGE_HTML.encode("utf-8"))
-
-    def _serve_font(self, name: str) -> None:
-        # Whitelist-only (no path traversal): just the bundled Google Sans weights.
-        if name not in FONT_FILES:
-            self._send(404, "text/plain; charset=utf-8", b"font not found")
-            return
-        with open(os.path.join(FONT_DIR, name), "rb") as fh:
-            body = fh.read()
-        ctype = "font/otf" if name.endswith(".otf") else "font/ttf"
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
 
     def do_POST(self) -> None:
         path = self.path.rstrip("/")
