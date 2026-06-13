@@ -355,6 +355,109 @@ def dg_from_peaks(peaks: list[dict], wavelength: float = DEFAULT_WAVELENGTH) -> 
 
 
 # ---------------------------------------------------------------------------
+# NETL-faithful fit (free y0, 1/2 peaks, lockable turbostratic, optional bg)
+# Mirrors the Swift engine; used for the AI-assisted / interactive deconvolution.
+# ---------------------------------------------------------------------------
+
+NETL_WINDOW: tuple[float, float] = (24.0, 30.0)
+
+
+def _y0_pv(x, y0, A, xc, w, mu):
+    return y0 + pseudo_voigt(x, A, xc, w, mu)
+
+
+def fit_netl(two_theta, intensity, *, peak_count: int = 2,
+             turbostratic_center: float | None = None, lock_turbostratic: bool = False,
+             subtract_background: bool = False,
+             wavelength: float = DEFAULT_WAVELENGTH,
+             window: tuple[float, float] = NETL_WINDOW) -> dict:
+    """
+    NETL PsdVoigt1 deconvolution with a free shared ``y0``: graphitic (free μ) +
+    optional pure-Lorentzian turbostratic (μ=1). One or two peaks; the
+    turbostratic centre may be supplied (the AI/human's choice). Returns DG% via
+    area-weighted Maire-Mering. Identical method to the Swift core.
+    """
+    tt = np.asarray(two_theta, float)
+    inten = np.asarray(intensity, float)
+    mask = (tt >= window[0]) & (tt <= window[1])
+    x, y = tt[mask], inten[mask]
+    if len(x) < 10:
+        raise FitError(f"only {len(x)} point(s) in the {window} window — too few to fit.")
+    if subtract_background:
+        n_edge = max(3, len(x) // 20)
+        xl, yl = x[:n_edge].mean(), y[:n_edge].mean()
+        xr, yr = x[-n_edge:].mean(), y[-n_edge:].mean()
+        slope = (yr - yl) / (xr - xl) if xr != xl else 0.0
+        y = np.clip(y - (yl + slope * (x - xl)), 0.0, None)
+
+    ph, ymin = float(y.max()), float(y.min())
+
+    def bragg(tt_deg):
+        return wavelength / (2.0 * np.sin(np.deg2rad(tt_deg / 2.0)))
+
+    if peak_count <= 1:
+        p0 = [ymin, ph * 0.9, 26.55, 0.2, 0.5]
+        lo = [-np.inf, 0, 26.3, 0.02, 0]; hi = [np.inf, np.inf, 26.8, 3, 1]
+        popt = GraphitizationAnalyzer._fit(_y0_pv, x, y, p0, (lo, hi), "AI single-peak")
+        y0, Ag, xcg, wg, mug = popt
+        At = xct = wt = None
+    elif lock_turbostratic and turbostratic_center is not None:
+        T = float(turbostratic_center)
+        model = lambda x, y0, Ag, xcg, wg, mug, At, wt: \
+            y0 + pseudo_voigt(x, Ag, xcg, wg, mug) + pseudo_voigt(x, At, T, wt, 1.0)
+        p0 = [ymin, ph * 0.6, 26.55, 0.15, 0.5, ph * 0.3, 0.5]
+        lo = [-np.inf, 0, 26.3, 0.02, 0, 0, 0.05]; hi = [np.inf, np.inf, 26.8, 3, 1, np.inf, 3]
+        popt = GraphitizationAnalyzer._fit(model, x, y, p0, (lo, hi), "AI two-peak (locked)")
+        y0, Ag, xcg, wg, mug, At, wt = popt; xct = T
+    else:
+        tseed = float(turbostratic_center) if turbostratic_center is not None else 26.2
+        model = lambda x, y0, Ag, xcg, wg, mug, At, xct, wt: \
+            y0 + pseudo_voigt(x, Ag, xcg, wg, mug) + pseudo_voigt(x, At, xct, wt, 1.0)
+        p0 = [ymin, ph * 0.6, 26.55, 0.15, 0.5, ph * 0.3, tseed, 0.6]
+        lo = [-np.inf, 0, 26.3, 0.02, 0, 0, 25.1, 0.05]
+        hi = [np.inf, np.inf, 26.8, 3, 1, np.inf, 26.45, 3]
+        popt = GraphitizationAnalyzer._fit(model, x, y, p0, (lo, hi), "AI two-peak")
+        y0, Ag, xcg, wg, mug, At, xct, wt = popt
+
+    dg = bragg(xcg)
+    if At is None:
+        Xg, Xt, d_prime = 1.0, 0.0, dg
+        turbo = None
+    else:
+        # graphitic = higher 2θ
+        if xct > xcg:
+            xcg, xct, Ag, At, wg, wt, mug = xct, xcg, At, Ag, wt, wg, 1.0
+        dt = bragg(xct)
+        total = Ag + At
+        Xg, Xt = (Ag / total, At / total) if total > 0 else (1.0, 0.0)
+        d_prime = Xg * dg + Xt * dt
+        turbo = {"xc": round(float(xct), 4), "w": round(float(wt), 4), "mu": 1.0,
+                 "A": round(float(At), 4), "d_spacing_angstrom": round(float(dt), 6)}
+
+    DG = (D_TURBOSTRATIC - d_prime) / (D_TURBOSTRATIC - D_GRAPHITE) * 100.0
+    B = np.deg2rad(wg)
+    Lc = SCHERRER_K * wavelength / (B * np.cos(np.deg2rad(xcg / 2.0)))
+    return {
+        "method_name": "NETL faithful (free y0)" + ("" if At is None else " · 2-peak"),
+        "wavelength_angstrom": round(wavelength, 6),
+        "y0": round(float(y0), 4),
+        "peak_count": 1 if At is None else 2,
+        "background_subtracted": bool(subtract_background),
+        "graphitic": {"xc": round(float(xcg), 4), "w": round(float(wg), 4),
+                      "mu": round(float(mug), 4), "A": round(float(Ag), 4),
+                      "d_spacing_angstrom": round(float(dg), 6)},
+        "turbostratic": turbo,
+        "area_fraction_graphitic": round(float(Xg), 6),
+        "area_fraction_turbostratic": round(float(Xt), 6),
+        "d_spacing_weighted_angstrom": round(float(d_prime), 6),
+        "crystallite_height_Lc_angstrom": round(float(Lc), 2),
+        "DG_percent": round(float(DG), 2),
+        "points_x": [round(float(v), 4) for v in x],
+        "points_y": [round(float(v), 4) for v in y],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Batch processing
 # ---------------------------------------------------------------------------
 

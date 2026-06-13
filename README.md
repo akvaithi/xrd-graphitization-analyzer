@@ -73,6 +73,22 @@ temperature, dwell time, sample form (puck/powder), and wash state — by a
 tolerant regex parser ([run_parser.py](run_parser.py)) that doesn't care about
 separator or casing.
 
+### AI deconvolution assist (optional)
+
+The NETL deconvolution needs a human to choose the setup (1 vs 2 peaks, where the
+turbostratic shoulder sits, whether to subtract background). The **Suggest
+deconvolution** button on the Analyze tab automates that first pass with an LLM —
+**Claude (cloud)** or a local **Ollama** model, picked from the dropdown — which
+the human then confirms. DG% is always computed locally by the deterministic
+engine ([ai_suggest.py](ai_suggest.py) sends only *derived numeric features*, not
+raw data). Validated against the postdoc gold standard: **~0.94% DG MAE** with
+Claude Opus, **~0.99–1.05%** with local Ollama models (gemma3:4b / qwen2.5 /
+llama3.1) — both beat fully-automatic (1.16%); expert hand-placement is 0.43%.
+A local model thus matches cloud accuracy with **nothing leaving the machine** —
+the right choice for sensitive data. Configure via env vars (see
+[compose.ghcr.yml](compose.ghcr.yml)): `AI_PROVIDER`, `ANTHROPIC_API_KEY` /
+`ANTHROPIC_MODEL`, or `OLLAMA_HOST` / `OLLAMA_MODEL`.
+
 ## Desktop app (macOS .app / Windows .exe)
 
 For lab users who don't want Docker or Python: download the prebuilt app from the

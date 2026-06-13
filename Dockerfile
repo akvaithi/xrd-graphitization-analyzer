@@ -26,7 +26,7 @@ from matplotlib.figure import Figure; import io; \
 f=Figure(); f.add_subplot(111).plot([0,1],[1,0]); f.savefig(io.BytesIO(), format='png')"
 
 # Application code (last, so edits don't bust the dependency/cache layers).
-COPY xrd_analyzer.py xrd_webgui.py run_parser.py ./
+COPY xrd_analyzer.py xrd_webgui.py run_parser.py ai_suggest.py ./
 
 EXPOSE 8000
 

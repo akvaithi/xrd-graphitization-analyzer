@@ -50,6 +50,7 @@ from xrd_analyzer import (
     GraphitizationAnalyzer,
     XRDPattern,
     dg_from_peaks,
+    fit_netl,
     pseudo_voigt,
 )
 from run_parser import parse_run_filename
@@ -127,6 +128,52 @@ def render_plot(pattern: XRDPattern, res: dict, theme: str = "dark") -> str:
     ax.set_xlabel("2θ  (degrees)", color=pal["muted"], fontsize=FS_LABEL)
     ax.set_ylabel("Intensity  (a.u.)", color=pal["muted"], fontsize=FS_LABEL)
     ax.set_title(f"Carbon (002) fit — DG {res['DG_percent']:.1f}%",
+                 color=pal["text"], fontsize=FS_TITLE, pad=8)
+    ax.legend(fontsize=FS_LEGEND, facecolor=pal["face"], edgecolor=pal["muted"],
+              labelcolor=pal["text"], framealpha=0.9)
+    fig.tight_layout(pad=1.3)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor=pal["face"], dpi=240)
+    buf.seek(0)
+    return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
+
+
+def render_plot_netl(pattern: XRDPattern, res: dict, theme: str = "dark") -> str:
+    """Render a NETL-faithful fit (``fit_netl`` result, includes y0 and 1/2 peaks)."""
+    pal = _plot_theme(theme)
+    fig = Figure(figsize=(9.0, 5.6), dpi=240, facecolor=pal["face"])
+    ax = fig.add_subplot(111)
+    ax.set_facecolor(pal["axes"])
+
+    x = np.asarray(res["points_x"], float)
+    y = np.asarray(res["points_y"], float)
+    y0 = float(res.get("y0", 0.0))
+    g, t = res["graphitic"], res.get("turbostratic")
+    xp = np.linspace(x.min(), x.max(), 1200)
+    yg = y0 + pseudo_voigt(xp, g["A"], g["xc"], g["w"], g["mu"])
+
+    ax.scatter(x, y, s=30, facecolors="none", edgecolors=pal["raw"], linewidths=1.0,
+               alpha=0.95, label="Raw data", zorder=6)
+    ax.fill_between(xp, yg, y0, alpha=0.22, color=RED_PEAK)
+    ax.plot(xp, yg, color=RED_PEAK, lw=1.8, label=f"Graphitic 2θ={g['xc']:.3f}°")
+    if t is not None:
+        yt = y0 + pseudo_voigt(xp, t["A"], t["xc"], t["w"], 1.0)
+        ytot = yg + yt - y0
+        ax.fill_between(xp, yt, y0, alpha=0.16, color=BLUE_PEAK)
+        ax.plot(xp, yt, color=BLUE_PEAK, lw=1.8,
+                label=f"Turbostratic 2θ={t['xc']:.3f}° (Lorentzian)")
+    else:
+        ytot = yg
+    ax.plot(xp, ytot, color=FIT_COL, lw=2.4, ls="--", label="Total fit", zorder=5)
+
+    ax.tick_params(colors=pal["muted"], labelsize=FS_TICK)
+    for spine in ax.spines.values():
+        spine.set_edgecolor(pal["muted"])
+    ax.grid(True, color=pal["grid"], lw=0.6)
+    ax.set_xlabel("2θ  (degrees)", color=pal["muted"], fontsize=FS_LABEL)
+    ax.set_ylabel("Intensity  (a.u.)", color=pal["muted"], fontsize=FS_LABEL)
+    ax.set_title(f"Carbon (002) fit — DG {res['DG_percent']:.1f}%  (AI-assisted)",
                  color=pal["text"], fontsize=FS_TITLE, pad=8)
     ax.legend(fontsize=FS_LEGEND, facecolor=pal["face"], edgecolor=pal["muted"],
               labelcolor=pal["text"], framealpha=0.9)
@@ -569,6 +616,11 @@ PAGE_HTML = """<!DOCTYPE html>
     <button id="nextBtn">Next ▶</button>
     <span id="fileInfo" class="muted"></span>
   </div>
+  <div class="ctrls" id="aiBar" style="display:none">
+    <label>AI deconvolution <select id="aiProvider"><option value="claude">Claude (cloud)</option><option value="ollama">Ollama (local)</option></select></label>
+    <button id="aiBtn" class="mini">✨ Suggest deconvolution</button>
+    <span id="aiNote" class="muted"></span>
+  </div>
   <div class="grid2">
     <div class="card" id="results"><div class="placeholder">Choose .xy file(s) — analysis runs automatically.</div></div>
     <div class="card"><div id="plotwrap"><span class="placeholder">Fit plot appears here.</span></div></div>
@@ -653,6 +705,7 @@ const $ = id => document.getElementById(id);
 const fileInput=$('file'), fnameEl=$('fname'), statusEl=$('status');
 const resultsEl=$('results'), plotWrap=$('plotwrap');
 const fileBar=$('fileBar'), fileSel=$('fileSel'), prevBtn=$('prevBtn'), nextBtn=$('nextBtn'), fileInfo=$('fileInfo');
+const aiBar=$('aiBar'), aiProvider=$('aiProvider'), aiBtn=$('aiBtn'), aiNote=$('aiNote');
 const ySel=$('ySel'), xSel=$('xSel'), gSel=$('gSel'), csvBtn=$('csvBtn');
 const chartWrap=$('chartwrap'), filtersEl=$('filters');
 const tablewrap=$('tablewrap'), chipsEl=$('chips');
@@ -717,6 +770,7 @@ async function runBatch(){
 // -- ANALYZE ----------------------------------------------------------------
 function buildFileSel(){
   fileBar.style.display = files.length>1?'flex':'none';
+  aiBar.style.display = files.length?'flex':'none';
   fileSel.innerHTML = rows.map((r,i)=>{
     const tag = r.error?'ERROR':(r.DG!=null?`DG ${r.DG.toFixed(2)}%`:'—');
     return `<option value="${i}">${i+1}/${rows.length}  ${r.label||r.file}  —  ${tag}</option>`;
@@ -724,6 +778,50 @@ function buildFileSel(){
 }
 prevBtn.addEventListener('click',()=>showFit(curFit-1));
 nextBtn.addEventListener('click',()=>showFit(curFit+1));
+aiBtn.addEventListener('click',()=>runAISuggest(curFit));
+
+async function runAISuggest(i){
+  if(i<0||i>=files.length) return;
+  aiBtn.disabled=true; aiNote.textContent=''; setStatus(`AI (${aiProvider.value}) analyzing…`);
+  try{
+    const resp=await fetch('/ai_suggest',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({xy:files[i].text, provider:aiProvider.value, theme:theme()})});
+    const d=await resp.json();
+    if(!resp.ok){ setStatus('AI error: '+(d.error||resp.statusText),true); aiBtn.disabled=false; return; }
+    const s=d.suggestion||{};
+    if(s.amorphous_invalid){ aiNote.textContent='⚠︎ too amorphous for the method — '+(s.rationale||''); setStatus('AI: amorphous'); aiBtn.disabled=false; return; }
+    const res=d.result;
+    if(!res){ setStatus('AI: '+(d.error||'no fit'),true); aiBtn.disabled=false; return; }
+    if(res.plot_png) plotWrap.innerHTML=`<img class="plot" src="${res.plot_png}" alt="AI fit">`;
+    renderResultsNetl(res, (rows[i]&&rows[i].label)||files[i].name, files[i].name, s);
+    const c=s.confidence||0;
+    aiNote.innerHTML=`<b style="color:${c<0.8?'var(--orange)':'var(--green)'}">${(c*100).toFixed(0)}% conf</b>`+
+      (c<0.8?' · review suggested':'')+` · ${s.peak_count} peak(s), turbo ${(+s.turbostratic_2theta).toFixed(3)}° · ${s.rationale}`;
+    setStatus(`AI done — DG ${res.DG_percent.toFixed(2)}%`);
+  }catch(err){ setStatus('AI request failed: '+err,true); }
+  finally{ aiBtn.disabled=false; }
+}
+function renderResultsNetl(d, title, sub, s){
+  const pct=x=>(x*100).toFixed(2)+'%';
+  let h=fileHead(title,sub)+
+    `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization (AI-assisted)</div>`+
+    `<div class="dg">${d.DG_percent.toFixed(2)} %</div><div class="cap">${d.method_name}</div></div>`+
+    `<div class="section">Graphitic peak</div>`+
+    row('2θ centre',d.graphitic.xc.toFixed(4),'°')+row('FWHM',d.graphitic.w.toFixed(4),'°')+
+    row('μ',d.graphitic.mu.toFixed(4))+row('Area',d.graphitic.A.toFixed(2))+
+    row('d-spacing',d.graphitic.d_spacing_angstrom.toFixed(6),'Å');
+  if(d.turbostratic){
+    h+=`<div class="section">Turbostratic peak (Lorentzian)</div>`+
+       row('2θ centre',d.turbostratic.xc.toFixed(4),'°')+row('FWHM',d.turbostratic.w.toFixed(4),'°')+
+       row('Area',d.turbostratic.A.toFixed(2))+row('d-spacing',d.turbostratic.d_spacing_angstrom.toFixed(6),'Å');
+  }
+  h+=`<div class="section">Result</div>`+
+     row('X_g / X_t',pct(d.area_fraction_graphitic)+' / '+pct(d.area_fraction_turbostratic))+
+     row("d′ weighted",d.d_spacing_weighted_angstrom.toFixed(6),'Å')+
+     row('Crystallite Lc',d.crystallite_height_Lc_angstrom.toFixed(2),'Å (apparent)')+
+     row('Baseline y0',d.y0.toFixed(3));
+  resultsEl.innerHTML=h;
+}
 fileSel.addEventListener('change',()=>showFit(parseInt(fileSel.value,10)));
 
 async function showFit(i){
@@ -991,7 +1089,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.split("?")[0].rstrip("/")
-        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks")):
+        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks", "/ai_suggest")):
             self._send(405, "text/plain; charset=utf-8", b"Use POST for this endpoint")
         else:
             # one single-page app; /dashboard and /manual kept as aliases
@@ -1019,6 +1117,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_stack()
             elif path.endswith("/calc_peaks"):
                 self._handle_calc_peaks()
+            elif path.endswith("/ai_suggest"):
+                self._handle_ai_suggest()
             else:
                 self._handle_analyze()
         except ValueError as exc:
@@ -1045,6 +1145,33 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._read_json()
         result = dg_from_peaks(payload.get("peaks", []))   # ValueError → 400
         self._send(200, "application/json", json.dumps(result).encode("utf-8"))
+
+    def _handle_ai_suggest(self) -> None:
+        """AI-assisted deconvolution: features → LLM (Claude/Ollama) → NETL fit."""
+        import ai_suggest  # lazy: only needed when the AI button is used
+        payload = self._read_json()
+        pattern = XRDPattern.from_text(payload.get("xy", ""))
+        feats = ai_suggest.compute_features(pattern.two_theta, pattern.intensity)
+        try:
+            dec = ai_suggest.suggest(feats, payload.get("provider"), payload.get("model"))
+        except Exception as exc:  # noqa: BLE001 — surface provider/credential errors cleanly
+            self._send(502, "application/json",
+                       json.dumps({"error": f"AI provider error — {exc}"}).encode("utf-8"))
+            return
+        out: dict = {"suggestion": dec, "features": feats,
+                     "confidence": dec.get("confidence"), "rationale": dec.get("rationale")}
+        if not dec.get("amorphous_invalid"):
+            try:
+                res = fit_netl(pattern.two_theta, pattern.intensity,
+                               peak_count=int(dec.get("peak_count", 2)),
+                               turbostratic_center=dec.get("turbostratic_2theta"),
+                               lock_turbostratic=int(dec.get("peak_count", 2)) == 2,
+                               subtract_background=bool(dec.get("subtract_background")))
+                res["plot_png"] = render_plot_netl(pattern, res, payload.get("theme", "dark"))
+                out["result"] = res
+            except (FitError, ValueError) as exc:
+                out["error"] = str(exc)
+        self._send(200, "application/json", json.dumps(out).encode("utf-8"))
 
     def _handle_batch(self) -> None:
         payload = self._read_json()
