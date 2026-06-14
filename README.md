@@ -1,9 +1,40 @@
 # XRD Degree of Graphitization Analyzer
 
-Object-oriented tool that parses X-ray Diffraction `.xy` files of synthetic
-graphite and computes the **Degree of Graphitization (DG%)** of the carbon (002)
-reflection. **One standard automatic pipeline** (no options), a CLI (single-file
-+ batch), and a local/zero-Tk web GUI.
+Computes the **Degree of Graphitization (DG%)** of synthetic graphite from X-ray
+diffraction `.xy` files — a reproducible, validated implementation of the **NETL
+method** (PsdVoigt1 deconvolution of the carbon (002) reflection → Bragg
+d-spacings → area-weighted d′ → Maire–Mering) for the TAMU / NETL / Oxbow
+ARPA-E "graphite from petroleum coke" project.
+
+**Why it exists.** The standard workflow is a slow, analyst-dependent OriginLab
+peak-fit, one sample at a time. This tool standardizes it: the same math every
+time, batch processing, and the one genuinely human judgment — how to deconvolve
+the (002) shoulder — made explicit (and optionally AI-assisted), while the DG
+number is always computed deterministically.
+
+**Three front-ends, one engine**
+
+| Surface | For | Notes |
+|---|---|---|
+| **CLI** ([xrd_analyzer.py](xrd_analyzer.py)) | scripting, batch, CI | single file / directory → table, JSON, CSV |
+| **Web app** ([xrd_webgui.py](xrd_webgui.py), Docker) | the lab / a shared server | Analyze · Compare · Stack · Manual; runs on your host |
+| **Native macOS app** ([native/](native/), Swift) | desktop, offline | interactive deconvolution, native charts, pure-Swift engine |
+
+**Validated against the postdoc's OriginLab gold standard** (mean abs error):
+expert hand-placement **0.43%**, AI-assisted **0.94%** (Claude) / **0.99%**
+(local Ollama), fully-automatic **1.16%** — all within the deconvolution's own
+uncertainty. The fit math is identical across the Python and Swift engines.
+
+**AI deconvolution assist (optional).** An LLM — **Claude** (cloud) or a local
+**Ollama** model, your choice — proposes the deconvolution setup from *derived
+numeric features* (not raw data); the human confirms; DG is computed locally.
+A small local model matches cloud accuracy, so it runs fully offline for
+sensitive data. Cu Kα λ = 1.54187 Å throughout.
+
+---
+
+The original CLI ships **one standard automatic pipeline** (no options) for
+single-file + batch use; the apps add the interactive / AI-assisted workflow.
 
 ## The standard pipeline
 
