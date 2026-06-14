@@ -18,7 +18,7 @@ struct XRDApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
                 .environmentObject(model)
                 .frame(minWidth: 940, minHeight: 580)
         }

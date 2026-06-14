@@ -1,13 +1,8 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
-struct ContentView: View {
+/// Analyze tab — sidebar of loaded runs + the interactive per-file deconvolution.
+struct AnalyzeView: View {
     @EnvironmentObject var model: AppModel
-
-    private var contentTypes: [UTType] {
-        [UTType(filenameExtension: "xy") ?? .plainText, .plainText, .text,
-         .commaSeparatedText, .data]
-    }
 
     var body: some View {
         NavigationSplitView {
@@ -18,7 +13,7 @@ struct ContentView: View {
                         .lineLimit(2)
                     Text(file.dgText)
                         .font(.system(size: 11))
-                        .foregroundStyle(dgColor(file))
+                        .foregroundStyle(file.failed ? .red : .secondary)
                 }
                 .padding(.vertical, 2)
                 .tag(file.id)
@@ -27,9 +22,7 @@ struct ContentView: View {
             .frame(minWidth: 240)
             .overlay {
                 if model.files.isEmpty {
-                    ContentUnavailableView(
-                        "No runs loaded",
-                        systemImage: "tray",
+                    ContentUnavailableView("No runs loaded", systemImage: "tray",
                         description: Text("Open .xy file(s) to analyze."))
                 }
             }
@@ -37,30 +30,9 @@ struct ContentView: View {
             if let file = model.selected() {
                 DetailView(file: file)
             } else {
-                ContentUnavailableView(
-                    "Select a run",
-                    systemImage: "chart.xyaxis.line",
+                ContentUnavailableView("Select a run", systemImage: "chart.xyaxis.line",
                     description: Text("Choose a file on the left, or open more."))
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    model.requestOpen()
-                } label: {
-                    Label("Open .xy…", systemImage: "plus")
-                }
-            }
-        }
-        .fileImporter(isPresented: $model.openRequested,
-                      allowedContentTypes: contentTypes,
-                      allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { model.open(urls) }
-        }
-        .task { model.openLaunchArguments() }
-    }
-
-    private func dgColor(_ f: LoadedFile) -> Color {
-        f.failed ? .red : .secondary
     }
 }

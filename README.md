@@ -148,10 +148,16 @@ A true native SwiftUI app (no browser, no local server) with the **DG pipeline
 ported to pure Swift** — a bounded Levenberg–Marquardt Pseudo-Voigt fit (free
 `y0`, free-μ graphitic + μ=1 turbostratic), validated to reproduce the Python /
 NETL numbers (peak positions identical; DG within the method's own uncertainty).
-The **Analyze** tab is interactive and human-in-the-loop: toggle 1/2 peaks, drag
-the turbostratic shoulder, optional background — the deconvolution the NETL
-procedure asks a human to make. With the turbostratic position supplied it
-reproduces the postdoc gold standard to ~0.43% DG MAE.
+Four tabs, at parity with the web app:
+
+- **Analyze** — interactive, human-in-the-loop: toggle 1/2 peaks, drag the
+  turbostratic shoulder, optional background, native fit plot, AI assist. With
+  the turbostratic position supplied it reproduces the gold standard to ~0.43% MAE.
+- **Compare** — scatter of any metric (DG/Lc/d′) vs synthesis parameter, coloured
+  by carbon type / form / wash, with per-run include toggles and CSV export.
+- **Stack spectra** — overlay/waterfall of raw intensities (offset slider, (002)
+  zoom, baseline subtract) to compare peak heights.
+- **Manual calc** — DG from hand-entered Origin peaks (the NETL excel sheet).
 
 ```bash
 cd native && ./scripts/make-app.sh        # → .build/"XRD Graphitization Analyzer.app"

@@ -1,22 +1,23 @@
 import Foundation
 import XRDCore
 
-/// One loaded `.xy` file: its standardized name, the raw pattern (for live
-/// re-fitting in the detail view), and a default auto-fit DG% for the sidebar.
+/// One loaded `.xy` file: standardized name, raw pattern (for live re-fitting),
+/// parsed run parameters, and the default auto-fit (for the Compare table).
 struct LoadedFile: Identifiable {
     let id = UUID()
     let url: URL
     let displayName: String
     let pattern: XRDPattern?
     let parseError: String?
-    let autoDG: Double?
+    let info: RunInfo?
+    let autoResult: DGResult?
 
     var dgText: String {
         if pattern == nil { return "—" }
-        if let dg = autoDG { return String(format: "%.2f%%", dg) }
+        if let r = autoResult { return String(format: "%.2f%%", r.dgPercent) }
         return "fit failed"
     }
-    var failed: Bool { pattern == nil || autoDG == nil }
+    var failed: Bool { pattern == nil || autoResult == nil }
 }
 
 @MainActor
@@ -33,19 +34,19 @@ final class AppModel: ObservableObject {
             let didScope = url.startAccessingSecurityScopedResource()
             defer { if didScope { url.stopAccessingSecurityScopedResource() } }
 
-            let name = RunParser.parse(fileName: url.lastPathComponent).displayName
+            let info = RunParser.parse(fileName: url.lastPathComponent)
             var pattern: XRDPattern? = nil
             var parseError: String? = nil
-            var autoDG: Double? = nil
+            var autoResult: DGResult? = nil
             do {
                 let p = try XRDPattern.parse(contentsOf: url)
                 pattern = p
-                autoDG = (try? GraphitizationAnalyzer(p).run())?.dgPercent
+                autoResult = try? GraphitizationAnalyzer(p).run()
             } catch {
                 parseError = String(describing: error)
             }
-            added.append(LoadedFile(url: url, displayName: name, pattern: pattern,
-                                    parseError: parseError, autoDG: autoDG))
+            added.append(LoadedFile(url: url, displayName: info.displayName, pattern: pattern,
+                                    parseError: parseError, info: info, autoResult: autoResult))
         }
         files.append(contentsOf: added)
         if selection == nil { selection = files.first?.id }
