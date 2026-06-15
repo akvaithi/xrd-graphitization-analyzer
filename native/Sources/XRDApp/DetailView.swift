@@ -3,6 +3,7 @@ import XRDCore
 
 struct DetailView: View {
     let file: LoadedFile
+    @EnvironmentObject private var server: OllamaServer
 
     @State private var peakCount = 2
     @State private var subtractBg = false
@@ -180,11 +181,19 @@ struct DetailView: View {
                             .background((c < 0.8 ? Color.orange : Color.green).opacity(0.22), in: Capsule())
                     }
                 }
-                TextField("Ollama host", text: $ollamaHost)
-                    .textFieldStyle(.roundedBorder).font(.caption)
+                if server.bundled {
+                    HStack(spacing: 6) {
+                        if server.host == nil { ProgressView().controlSize(.small) }
+                        Text(server.host != nil ? "Local model ready (gemma3:4b)" : "Local model \(server.status)")
+                            .font(.caption).foregroundStyle(server.host != nil ? .green : .secondary)
+                    }
+                } else {
+                    TextField("Ollama host", text: $ollamaHost)
+                        .textFieldStyle(.roundedBorder).font(.caption)
+                }
                 HStack {
                     Button { runAI() } label: { Label("Suggest deconvolution", systemImage: "wand.and.stars") }
-                        .disabled(aiBusy || file.pattern == nil)
+                        .disabled(aiBusy || file.pattern == nil || effectiveHost == nil)
                     if aiBusy { ProgressView().controlSize(.small) }
                 }
                 if let note = aiNote {
@@ -192,17 +201,25 @@ struct DetailView: View {
                         .foregroundStyle((aiConfidence ?? 1) < 0.8 ? .orange : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Runs locally via Ollama (gemma3:4b) — nothing leaves your machine. You confirm the result; DG% is computed locally.")
+                Text(server.bundled
+                     ? "Runs a model bundled in the app (gemma3:4b) — no setup, nothing leaves your machine. You confirm the result; DG% is computed locally."
+                     : "Uses a local Ollama model — nothing leaves your machine. You confirm the result; DG% is computed locally.")
                     .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 4)
         }
     }
 
+    /// Bundled server when ready, else the manual host (dev / system Ollama).
+    private var effectiveHost: String? {
+        if let h = server.host { return h }
+        return ollamaHost.isEmpty ? nil : ollamaHost
+    }
+
     private func runAI() {
         guard let p = file.pattern else { return }
         aiBusy = true; aiNote = nil; aiConfidence = nil
-        let host = ollamaHost
+        let host = effectiveHost ?? AISuggester.defaultHost
         Task {
             do {
                 let (s, feats) = try await AISuggester.suggest(p, ollamaHost: host)

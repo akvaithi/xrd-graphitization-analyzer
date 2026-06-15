@@ -165,18 +165,23 @@ cd native && ./scripts/make-app.sh        # → .build/"XRD Graphitization Analy
 open ".build/XRD Graphitization Analyzer.app"
 ```
 
-**AI assist (optional, fully local).** A "Suggest deconvolution" button asks a
-**local Ollama model (gemma3:4b)** to choose the setup — peak count, turbostratic
-position, background — which the human then confirms; **DG% is always computed
-locally** by the Swift engine. It sends *derived numeric features* to Ollama on
-your machine — no cloud, no API key. Validated at ~0.99% DG MAE vs the gold
-standard (beats fully-automatic 1.16%; expert 0.43%). Every (features →
-suggestion → human-confirmed result) triple is logged to
-`~/Library/Application Support/XRD Graphitization Analyzer/decisions.jsonl` — the
-labeled dataset for future tuning. Low-confidence calls are flagged for review.
+**AI assist (optional) — bundled, zero setup.** A "Suggest deconvolution" button
+asks **gemma3:4b** to choose the setup — peak count, turbostratic position,
+background — which the human then confirms; **DG% is always computed locally** by
+the Swift engine. The model + the Ollama runtime are **bundled inside the .app**:
+on launch it starts a *private* local server (own free port, isolated from any
+system Ollama) and stops it on quit — the user installs nothing, and nothing ever
+leaves the machine. Validated at ~0.99% DG MAE vs the gold standard (beats
+fully-automatic 1.16%; expert 0.43%; bigger local models and Apple Foundation
+Models scored 1.18%). Every (features → suggestion → human-confirmed result)
+triple is logged to `~/Library/Application Support/XRD Graphitization
+Analyzer/decisions.jsonl` for future tuning; low-confidence calls are flagged.
 
-> Requires a running Ollama (`ollama pull gemma3:4b`); set the host in the AI
-> panel or `OLLAMA_HOST`. Nothing leaves the machine — safe for ARPA-E/NETL data.
+> **Bundling** happens at build time and makes the `.app` ~3.6 GB:
+> `make-app.sh` copies the Ollama runtime + gemma3:4b from a local install
+> (needs `Ollama.app` + `ollama pull gemma3:4b`; override with `OLLAMA_RES` /
+> `OLLAMA_MODELS_SRC`). The ~3.3 GB assets are **not** in git. Built without them,
+> the app falls back to a system Ollama via the host field.
 
 ## Deploy
 

@@ -1,12 +1,15 @@
 import SwiftUI
 import AppKit
 
-/// Forces a normal foreground app with an active window even when the process is
-/// launched from a non-GUI context (and guarantees it comes to the front).
+/// Forces a normal foreground app, and starts/stops the bundled Ollama server.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        MainActor.assumeIsolated { OllamaServer.shared.start() }
+    }
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { OllamaServer.shared.stop() }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
 }
@@ -20,6 +23,7 @@ struct XRDApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(model)
+                .environmentObject(OllamaServer.shared)
                 .frame(minWidth: 940, minHeight: 580)
         }
         .defaultSize(width: 1040, height: 660)
