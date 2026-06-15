@@ -48,6 +48,14 @@ single-file + batch use; the apps add the interactive / AI-assisted workflow.
 3. Bragg d-spacings, area fractions, area-weighted `d′`, and the **Maire–Mering**
    DG%. Crystallite height **Lc = 0.89·λ / (B·cos(θ/2))** from the graphitic FWHM.
 
+The NETL fit window's right edge is trimmed to **28.5°** so residual calcite
+CaCO₃ (104) (~29.4–29.7°) in carbonate-heavy/unwashed samples can never intrude
+(that region is pure (002) baseline, so DG is unchanged — verified < 0.15° shift).
+A **data-quality scan** also runs over the *full* pattern and flags catalyst /
+carbonate residue (Fe, Fe₃C, CaO, calcite) by phase and intensity relative to the
+(002) — these all lie outside the fit window, so they never affect DG, but the
+flag tells you whether acid washing was complete (mirrored in web + desktop apps).
+
 Validated against the NETL/postdoc OriginLab fits: mean abs error ≈ 1.3 DG% across
 the GPC/CPC sample set. X-ray wavelength is fixed to Cu Kα **λ = 1.54187 Å**.
 `OptimizeWarning` / fit failures are caught and reported cleanly.

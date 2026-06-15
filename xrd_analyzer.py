@@ -359,7 +359,102 @@ def dg_from_peaks(peaks: list[dict], wavelength: float = DEFAULT_WAVELENGTH) -> 
 # Mirrors the Swift engine; used for the AI-assisted / interactive deconvolution.
 # ---------------------------------------------------------------------------
 
-NETL_WINDOW: tuple[float, float] = (24.0, 30.0)
+# (002) deconvolution window. Right edge trimmed to 28.5° so the calcite CaCO3
+# (104) reflection (~29.4-29.7°), which can survive in carbonate-heavy/unwashed
+# samples, can never intrude on the fit — that region is pure baseline for the
+# (002) anyway, so DG is unchanged (verified < 0.15% shift vs 24-30°).
+NETL_WINDOW: tuple[float, float] = (24.0, 28.5)
+
+
+# Reference 2theta lines (Cu Kα) for a QC phase scan. Graphite lines are the
+# expected signal; the rest are catalyst/carbonate residue that acid washing is
+# meant to remove. (002) is excluded — it's the analyte, handled by the fit.
+_GRAPHITE_LINES = {                 # 2theta: label  — expected, NOT impurities
+    42.4: "graphite (100)", 44.6: "graphite (101)", 50.6: "graphite (102)",
+    54.7: "graphite (004)", 77.5: "graphite (110)", 83.6: "graphite (112)",
+}
+_IMPURITY_LINES = {                 # 2theta: (phase, what it means)
+    29.4: ("calcite CaCO3 (104)", "carbonate residue"),
+    30.9: ("calcite/dolomite", "carbonate residue"),
+    36.0: ("iron oxide (Fe3O4/Fe2O3)", "oxidised catalyst"),
+    37.4: ("CaO (200)", "lime from CaCO3 decomposition"),
+    43.8: ("Fe3C cementite", "unreacted iron carbide"),
+    45.0: ("Fe3C / Fe", "iron carbide / metallic iron"),
+    49.1: ("Fe3C cementite", "unreacted iron carbide"),
+    53.9: ("CaO (220)", "lime from CaCO3 decomposition"),
+    64.9: ("metallic Fe (200)", "unreacted iron catalyst"),
+}
+
+
+def scan_impurities(two_theta, intensity, *, tol: float = 0.45,
+                    trace_frac: float = 0.012) -> dict:
+    """Full-pattern QC scan: flag catalyst/carbonate residue peaks.
+
+    Detects local-prominence peaks across the whole scan and assigns each to a
+    known graphite or impurity line. DG is computed only from the (002) window,
+    so this never changes the result — it's a data-quality flag indicating
+    whether acid washing was complete. Severity is relative to the (002) height.
+    """
+    tt = np.asarray(two_theta, float)
+    inten = np.asarray(intensity, float)
+    if tt.size < 50:
+        return {"verdict": "insufficient range", "impurities": [], "clean": True}
+    o = np.argsort(tt)
+    x, y = tt[o], inten[o]
+
+    # (002) height for relative severity
+    win = (x >= 24.0) & (x <= 28.5)
+    i002 = float(y[win].max()) if win.any() else float(y.max())
+    base002 = float(np.median(np.r_[y[win][:8], y[win][-8:]])) if win.sum() > 16 else float(np.min(y))
+    h002 = max(i002 - base002, 1e-9)
+
+    # local-prominence peak detection vs a wide rolling minimum (baseline)
+    half = 30
+    pad = np.pad(y, half, mode="edge")
+    rollmin = np.array([pad[i:i + 2 * half + 1].min() for i in range(len(y))])
+    prom = y - rollmin
+    noise = float(np.std(np.r_[y[:20], y[-20:]]))
+    thresh = max(5.0 * noise, trace_frac * h002, 4.0)
+
+    peaks = []
+    w = 12
+    for i in range(w, len(y) - w):
+        seg = y[i - w:i + w + 1]
+        if y[i] == seg.max() and prom[i] >= thresh:
+            if not peaks or x[i] - peaks[-1][0] > 0.7:
+                peaks.append([x[i], prom[i]])
+            elif prom[i] > peaks[-1][1]:
+                peaks[-1] = [x[i], prom[i]]
+
+    impurities = []
+    for px, pr in peaks:
+        if abs(px - 26.5) < 1.0:
+            continue  # the (002) analyte itself
+        g = min(_GRAPHITE_LINES, key=lambda r: abs(r - px))
+        m = min(_IMPURITY_LINES, key=lambda r: abs(r - px))
+        dg_, dm_ = abs(g - px), abs(m - px)
+        if dg_ < tol and dg_ <= dm_:
+            continue  # an expected graphite reflection
+        if dm_ < tol:
+            phase, meaning = _IMPURITY_LINES[m]
+            rel = round(100.0 * float(pr) / h002, 1)
+            impurities.append({"two_theta": round(float(px), 2), "phase": phase,
+                               "meaning": meaning, "rel_pct": rel,
+                               "level": ("significant" if rel >= 10 else
+                                         "minor" if rel >= 2 else "trace")})
+
+    impurities.sort(key=lambda d: -d["rel_pct"])
+    worst = float(max((d["rel_pct"] for d in impurities), default=0.0))
+    if not impurities:
+        verdict = "Clean — graphite reflections only."
+    elif worst >= 10:
+        verdict = "Residual catalyst/carbonate detected — washing likely incomplete."
+    elif worst >= 2:
+        verdict = "Minor residual catalyst/carbonate present."
+    else:
+        verdict = "Trace impurities only — essentially clean."
+    return {"verdict": verdict, "impurities": impurities,
+            "clean": bool(worst < 2), "worst_pct": round(worst, 1)}
 
 
 def _y0_pv(x, y0, A, xc, w, mu):

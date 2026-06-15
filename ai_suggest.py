@@ -69,7 +69,7 @@ def _pv(x, A, xc, w, mu):
                 * np.exp(-(4 * ln2 / w ** 2) * dx ** 2))
 
 
-def compute_features(two_theta, intensity, low=24.0, high=30.0) -> dict:
+def compute_features(two_theta, intensity, low=24.0, high=28.5) -> dict:
     """Single-peak + automatic two-peak fits → the features the LLM reasons over."""
     tt = np.asarray(two_theta, float)
     inten = np.asarray(intensity, float)

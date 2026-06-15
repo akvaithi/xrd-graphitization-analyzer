@@ -52,6 +52,7 @@ from xrd_analyzer import (
     dg_from_peaks,
     fit_netl,
     pseudo_voigt,
+    scan_impurities,
 )
 from run_parser import parse_run_filename
 
@@ -496,6 +497,19 @@ PAGE_HTML = """<!DOCTYPE html>
              text-transform:uppercase; margin:18px 0 6px; padding-bottom:5px;
              border-bottom:0.5px solid var(--sep); }
   .section:first-child { margin-top:0; }
+  .qc { margin:12px 0 4px; padding:10px 12px; border-radius:9px; font-size:12px;
+        border:0.5px solid var(--sep); }
+  .qc-clean { background:color-mix(in srgb, var(--green) 12%, transparent);
+              border-color:color-mix(in srgb, var(--green) 35%, transparent); }
+  .qc-warn  { background:color-mix(in srgb, var(--orange) 14%, transparent);
+              border-color:color-mix(in srgb, var(--orange) 40%, transparent); }
+  .qc-head { font-weight:600; }
+  .qc-clean .qc-head { color:var(--green); }
+  .qc-warn .qc-head { color:var(--orange); }
+  .qc-list { margin-top:7px; display:flex; flex-direction:column; gap:3px;
+             font-variant-numeric:tabular-nums; }
+  .qc-lvl { opacity:0.6; font-size:11px; margin-left:4px; }
+  .qc-foot { margin-top:7px; font-size:11px; opacity:0.6; }
   .row { display:flex; justify-content:space-between; align-items:baseline; gap:12px;
          padding:5px 0; font-size:13px; border-bottom:0.5px solid var(--sep2); }
   .row:last-child { border-bottom:none; }
@@ -797,7 +811,7 @@ async function runAISuggest(i){
     const res=d.result;
     if(!res){ setStatus('AI: '+(d.error||'no fit'),true); aiBtn.disabled=false; return; }
     if(res.plot_png) plotWrap.innerHTML=`<img class="plot" src="${res.plot_png}" alt="AI fit">`;
-    renderResultsNetl(res, (rows[i]&&rows[i].label)||files[i].name, files[i].name, s);
+    renderResultsNetl(res, (rows[i]&&rows[i].label)||files[i].name, files[i].name, s, d.quality);
     const c=s.confidence||0;
     aiNote.innerHTML=`<b style="color:${c<0.8?'var(--orange)':'var(--green)'}">${(c*100).toFixed(0)}% conf</b>`+
       (c<0.8?' · review suggested':'')+` · ${s.peak_count} peak(s), turbo ${(+s.turbostratic_2theta).toFixed(3)}° · ${s.rationale}`;
@@ -805,11 +819,12 @@ async function runAISuggest(i){
   }catch(err){ setStatus('AI request failed: '+err,true); }
   finally{ aiBtn.disabled=false; }
 }
-function renderResultsNetl(d, title, sub, s){
+function renderResultsNetl(d, title, sub, s, q){
   const pct=x=>(x*100).toFixed(2)+'%';
   let h=fileHead(title,sub)+
     `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization (AI-assisted)</div>`+
     `<div class="dg">${d.DG_percent.toFixed(2)} %</div><div class="cap">${d.method_name}</div></div>`+
+    qualityBanner(q)+
     `<div class="section">Graphitic peak</div>`+
     row('2θ centre',d.graphitic.xc.toFixed(4),'°')+row('FWHM',d.graphitic.w.toFixed(4),'°')+
     row('μ',d.graphitic.mu.toFixed(4))+row('Area',d.graphitic.A.toFixed(2))+
@@ -861,6 +876,18 @@ function showError(title,sub,msg){
 }
 function row(l,v,u=''){ return `<div class="row"><span>${l}</span><span><span class="val">${v}</span>`+
   (u?`<span class="unit">${u}</span>`:'')+`</span></div>`; }
+function qualityBanner(q){
+  if(!q || !q.verdict) return '';
+  const cls=q.clean?'qc-clean':'qc-warn', icon=q.clean?'✓':'⚠︎';
+  let h=`<div class="qc ${cls}"><div class="qc-head">${icon} ${q.verdict}</div>`;
+  if(q.impurities && q.impurities.length){
+    h+='<div class="qc-list">'+q.impurities.map(im=>
+      `<div><b>${im.two_theta}°</b> ${im.phase} · ${im.rel_pct}% of (002) `+
+      `<span class="qc-lvl">${im.level}</span></div>`).join('')+'</div>';
+    h+=`<div class="qc-foot">Impurities lie outside the (002) window — DG is unaffected; this flags wash completeness.</div>`;
+  }
+  return h+'</div>';
+}
 function peakRows(p){ return row('  xc (2θ)',p.xc.toFixed(4),'°')+row('  w (FWHM)',p.w.toFixed(4),'°')+
   row('  μ',p.mu.toFixed(4))+row('  A (area)',p.A.toFixed(4))+row('  d-spacing',p.d_spacing_angstrom.toFixed(6),'Å'); }
 function renderResults(d, title, sub){
@@ -868,6 +895,7 @@ function renderResults(d, title, sub){
   let h=(title?fileHead(title,sub):'')+
     `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization</div>`+
     `<div class="dg">${d.DG_percent.toFixed(2)} %</div><div class="cap">Maire-Mering equation</div></div>`+
+    qualityBanner(d.quality)+
     `<div class="section">${d.method_name}</div>`+
     row('Wavelength λ',d.wavelength_angstrom.toFixed(5),'Å')+
     `<div class="section">Graphitic peak</div>`+peakRows(d.graphitic)+
@@ -1143,6 +1171,10 @@ class Handler(BaseHTTPRequestHandler):
             res["plot_png"] = render_plot(pattern, res, payload.get("theme", "dark"))
         except (FitError, ValueError) as exc:
             res = {"error": str(exc)}
+        try:  # data-quality scan runs regardless of fit success; never blocks DG
+            res["quality"] = scan_impurities(pattern.two_theta, pattern.intensity)
+        except Exception:  # noqa: BLE001
+            pass
         self._send(200, "application/json", json.dumps(res).encode("utf-8"))
 
     def _handle_calc_peaks(self) -> None:
@@ -1175,6 +1207,10 @@ class Handler(BaseHTTPRequestHandler):
                 out["result"] = res
             except (FitError, ValueError) as exc:
                 out["error"] = str(exc)
+        try:
+            out["quality"] = scan_impurities(pattern.two_theta, pattern.intensity)
+        except Exception:  # noqa: BLE001
+            pass
         self._send(200, "application/json", json.dumps(out).encode("utf-8"))
 
     def _handle_batch(self) -> None:

@@ -21,7 +21,9 @@ public struct FitOptions: Sendable, Equatable {
     public var peakCount: Int = 2                 // 1 or 2
     public var subtractBackground: Bool = false   // sloped baseline (NETL step 4)
     public var windowLow: Double = 24.0
-    public var windowHigh: Double = 30.0
+    // Right edge trimmed to 28.5° so residual calcite CaCO3 (104) (~29.4-29.7°)
+    // can't intrude; that region is pure (002) baseline, so DG is unchanged.
+    public var windowHigh: Double = 28.5
     public var graphiticCenter: Double? = nil     // optional seed for the (002) centre
     public var turbostraticCenter: Double? = nil  // human-set shoulder position
     public var lockTurbostratic: Bool = false     // fix turbostratic xc to the value above

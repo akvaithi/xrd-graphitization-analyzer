@@ -11,6 +11,7 @@ struct DetailView: View {
     @State private var turboLocked = false
     @State private var result: DGResult?
     @State private var fitError: String?
+    @State private var quality: ImpurityScan?
 
     // AI assist (local Ollama)
     @State private var ollamaHost = ProcessInfo.processInfo.environment["OLLAMA_HOST"] ?? "http://localhost:11434"
@@ -51,6 +52,7 @@ struct DetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let r = result { dgCallout(r) }
+                if let q = quality, !q.hits.isEmpty { qualityCard(q) }
 
                 GroupBox("Deconvolution") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -108,6 +110,32 @@ struct DetailView: View {
         .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
     }
 
+    private func qualityCard(_ q: ImpurityScan) -> some View {
+        let warn = !q.clean
+        return VStack(alignment: .leading, spacing: 6) {
+            Label(q.verdict, systemImage: warn ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                .font(.caption).fontWeight(.semibold)
+                .foregroundStyle(warn ? .orange : .green)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(q.hits) { h in
+                HStack(spacing: 6) {
+                    Text(String(format: "%.2f°", h.twoTheta)).monospacedDigit().foregroundStyle(.secondary)
+                    Text(h.phase)
+                    Spacer()
+                    Text(String(format: "%.1f%%", h.relPct)).monospacedDigit()
+                    Text(h.level).font(.caption2).foregroundStyle(.tertiary)
+                }
+                .font(.caption)
+            }
+            Text("Impurities lie outside the (002) window — DG is unaffected; this flags wash completeness.")
+                .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background((warn ? Color.orange : Color.green).opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 10))
+    }
+
     private func resultRows(_ r: DGResult) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             section("Graphitic peak", [
@@ -148,6 +176,7 @@ struct DetailView: View {
 
     private func seedFromAuto() {
         peakCount = 2; subtractBg = false; turboLocked = false
+        quality = file.pattern.map { ImpurityScan.scan($0) }
         if let p = file.pattern, let auto = try? GraphitizationAnalyzer(p).run(),
            let t = auto.turbostratic {
             turboCenter = t.xc
