@@ -21,15 +21,15 @@ number is always computed deterministically.
 | **Native macOS app** ([native/](native/), Swift) | desktop, offline | interactive deconvolution, native charts, pure-Swift engine |
 
 **Validated against the postdoc's OriginLab gold standard** (mean abs error):
-expert hand-placement **0.43%**, AI-assisted **0.94%** (Claude) / **0.99%**
-(local Ollama), fully-automatic **1.16%** — all within the deconvolution's own
-uncertainty. The fit math is identical across the Python and Swift engines.
+expert hand-placement **0.43%**, AI-assisted **0.99%** (local Ollama gemma3:4b),
+fully-automatic **1.16%** — all within the deconvolution's own uncertainty. The
+fit math is identical across the Python and Swift engines.
 
-**AI deconvolution assist (optional).** An LLM — **Claude** (cloud) or a local
-**Ollama** model, your choice — proposes the deconvolution setup from *derived
-numeric features* (not raw data); the human confirms; DG is computed locally.
-A small local model matches cloud accuracy, so it runs fully offline for
-sensitive data. Cu Kα λ = 1.54187 Å throughout.
+**AI deconvolution assist (optional, fully local).** A local **Ollama** model
+(gemma3:4b) proposes the deconvolution setup from *derived numeric features*
+(not raw data); the human confirms; DG is computed locally. Everything runs on
+your machine — **no cloud, no API key** — so it's safe for sensitive data.
+Cu Kα λ = 1.54187 Å throughout.
 
 ---
 
@@ -104,21 +104,22 @@ temperature, dwell time, sample form (puck/powder), and wash state — by a
 tolerant regex parser ([run_parser.py](run_parser.py)) that doesn't care about
 separator or casing.
 
-### AI deconvolution assist (optional)
+### AI deconvolution assist (optional, fully local)
 
 The NETL deconvolution needs a human to choose the setup (1 vs 2 peaks, where the
 turbostratic shoulder sits, whether to subtract background). The **Suggest
-deconvolution** button on the Analyze tab automates that first pass with an LLM —
-**Claude (cloud)** or a local **Ollama** model, picked from the dropdown — which
-the human then confirms. DG% is always computed locally by the deterministic
-engine ([ai_suggest.py](ai_suggest.py) sends only *derived numeric features*, not
-raw data). Validated against the postdoc gold standard: **~0.94% DG MAE** with
-Claude Opus, **~0.99–1.05%** with local Ollama models (gemma3:4b / qwen2.5 /
-llama3.1) — both beat fully-automatic (1.16%); expert hand-placement is 0.43%.
-A local model thus matches cloud accuracy with **nothing leaving the machine** —
-the right choice for sensitive data. Configure via env vars (see
-[compose.ghcr.yml](compose.ghcr.yml)): `AI_PROVIDER`, `ANTHROPIC_API_KEY` /
-`ANTHROPIC_MODEL`, or `OLLAMA_HOST` / `OLLAMA_MODEL`.
+deconvolution** button on the Analyze tab automates that first pass with a **local
+Ollama model (gemma3:4b)** — no cloud, no API key — which the human then confirms.
+DG% is always computed locally by the deterministic engine
+([ai_suggest.py](ai_suggest.py) sends only *derived numeric features*, not raw
+data). Validated against the postdoc gold standard: **~0.99% DG MAE**, beating
+fully-automatic (1.16%) and approaching the expert hand-fit (0.43%) — a small
+local model that runs entirely on the machine, so it's safe for sensitive data.
+Benchmark across local models (8 spectra): gemma3:4b **0.99%**, qwen2.5 / llama3.1
+**1.05%**, phi4 **1.08%**, gemma3:12b / qwen2.5:14b **1.18%** — *bigger was not
+better*, so gemma3:4b is the default. Configure via env vars (see
+[compose.ghcr.yml](compose.ghcr.yml)): `OLLAMA_HOST` / `OLLAMA_MODEL`. Needs a
+running Ollama with the model pulled (`ollama pull gemma3:4b`).
 
 ## Desktop app (macOS .app / Windows .exe)
 
@@ -164,19 +165,18 @@ cd native && ./scripts/make-app.sh        # → .build/"XRD Graphitization Analy
 open ".build/XRD Graphitization Analyzer.app"
 ```
 
-**AI assist (optional, opt-in).** A "Suggest deconvolution" button asks an LLM
-(Claude) to choose the setup — peak count, turbostratic position, background —
-which the human then confirms; **DG% is always computed locally** by the Swift
-engine. It sends *derived numeric features*, not raw data, and only runs when an
-`ANTHROPIC_API_KEY` is provided (env var or the in-app field). Validated at
-~0.94% DG MAE vs the gold standard (beats fully-automatic 1.16%; expert 0.43%).
-Every (features → suggestion → human-confirmed result) triple is logged to
+**AI assist (optional, fully local).** A "Suggest deconvolution" button asks a
+**local Ollama model (gemma3:4b)** to choose the setup — peak count, turbostratic
+position, background — which the human then confirms; **DG% is always computed
+locally** by the Swift engine. It sends *derived numeric features* to Ollama on
+your machine — no cloud, no API key. Validated at ~0.99% DG MAE vs the gold
+standard (beats fully-automatic 1.16%; expert 0.43%). Every (features →
+suggestion → human-confirmed result) triple is logged to
 `~/Library/Application Support/XRD Graphitization Analyzer/decisions.jsonl` — the
 labeled dataset for future tuning. Low-confidence calls are flagged for review.
 
-> Sending data (even derived features) to a third-party API is a research-data
-> decision — confirm with your PI / funding terms before using AI assist on
-> ARPA-E/NETL samples.
+> Requires a running Ollama (`ollama pull gemma3:4b`); set the host in the AI
+> panel or `OLLAMA_HOST`. Nothing leaves the machine — safe for ARPA-E/NETL data.
 
 ## Deploy
 

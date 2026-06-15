@@ -1,18 +1,15 @@
 """
-ai_suggest.py — provider-agnostic AI deconvolution suggester.
+ai_suggest.py — local AI deconvolution suggester (Ollama only).
 
-Given an XRD (002) spectrum it computes numeric features and asks an LLM
-(Anthropic Claude *or* a local Ollama model) to choose the NETL deconvolution
-setup — peak count, turbostratic shoulder position, background. It does NOT
-compute DG%: the deterministic pipeline does that. Stdlib-only (urllib) so the
-container needs no extra dependencies.
+Given an XRD (002) spectrum it computes numeric features and asks a local Ollama
+model to choose the NETL deconvolution setup — peak count, turbostratic shoulder
+position, background. It does NOT compute DG%: the deterministic pipeline does
+that. Runs entirely on your machine (no cloud, no API key); stdlib-only (urllib)
+so the container needs no extra dependencies.
 
 Config (env, overridable per call):
-    AI_PROVIDER      "claude" | "ollama"            (default "claude")
-    ANTHROPIC_API_KEY   Claude key
-    ANTHROPIC_MODEL  default "claude-opus-4-8"
     OLLAMA_HOST      default "http://localhost:11434"
-    OLLAMA_MODEL     default "qwen2.5"
+    OLLAMA_MODEL     default "gemma3:4b"  (best local model in our benchmark)
 """
 
 from __future__ import annotations
@@ -28,8 +25,7 @@ from scipy.optimize import curve_fit
 
 warnings.simplefilter("ignore")
 
-DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
-DEFAULT_OLLAMA_MODEL = "qwen2.5"
+DEFAULT_OLLAMA_MODEL = "gemma3:4b"
 
 SYSTEM_PROMPT = """You are an expert XRD analyst applying the NETL standard procedure to deconvolve the carbon (002) reflection of Fe-catalyzed petroleum-coke graphite, to SET UP a Degree of Graphitization calculation. You decide ONLY the deconvolution setup; you do NOT compute DG%.
 
@@ -131,23 +127,6 @@ def _http_json(url, payload, headers, timeout=120):
         return json.loads(r.read().decode())
 
 
-def _ask_claude(features, model, api_key):
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not set")
-    body = {
-        "model": model, "max_tokens": 2000,
-        "thinking": {"type": "adaptive"},
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user",
-                      "content": "Features (JSON):\n" + json.dumps(features, indent=2)}],
-        "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
-    }
-    resp = _http_json("https://api.anthropic.com/v1/messages", body,
-                      {"x-api-key": api_key, "anthropic-version": "2023-06-01"})
-    text = next(b["text"] for b in resp["content"] if b.get("type") == "text")
-    return json.loads(text)
-
-
 def _ask_ollama(features, model, host):
     body = {
         "model": model, "stream": False, "format": SCHEMA,
@@ -161,14 +140,9 @@ def _ask_ollama(features, model, host):
     return json.loads(resp["message"]["content"])
 
 
-def suggest(features: dict, provider: str | None = None, model: str | None = None,
-            *, api_key: str | None = None, ollama_host: str | None = None) -> dict:
-    """Return the deconvolution decision dict from the chosen provider."""
-    provider = (provider or os.environ.get("AI_PROVIDER", "claude")).lower()
-    if provider == "claude":
-        return _ask_claude(features, model or os.environ.get("ANTHROPIC_MODEL", DEFAULT_CLAUDE_MODEL),
-                           api_key or os.environ.get("ANTHROPIC_API_KEY", ""))
-    if provider == "ollama":
-        return _ask_ollama(features, model or os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
-                           ollama_host or os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
-    raise ValueError(f"unknown provider '{provider}' (use 'claude' or 'ollama')")
+def suggest(features: dict, model: str | None = None,
+            *, ollama_host: str | None = None) -> dict:
+    """Return the deconvolution decision dict from the local Ollama model."""
+    return _ask_ollama(features,
+                       model or os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
+                       ollama_host or os.environ.get("OLLAMA_HOST", "http://localhost:11434"))

@@ -617,8 +617,7 @@ PAGE_HTML = """<!DOCTYPE html>
     <span id="fileInfo" class="muted"></span>
   </div>
   <div class="ctrls" id="aiBar" style="display:none">
-    <label>AI deconvolution <select id="aiProvider"><option value="claude">Claude (cloud)</option><option value="ollama">Ollama (local)</option></select></label>
-    <button id="aiBtn" class="mini">✨ Suggest deconvolution</button>
+    <button id="aiBtn" class="mini">✨ Suggest deconvolution (local AI)</button>
     <span id="aiNote" class="muted"></span>
   </div>
   <div class="grid2">
@@ -705,7 +704,7 @@ const $ = id => document.getElementById(id);
 const fileInput=$('file'), fnameEl=$('fname'), statusEl=$('status');
 const resultsEl=$('results'), plotWrap=$('plotwrap');
 const fileBar=$('fileBar'), fileSel=$('fileSel'), prevBtn=$('prevBtn'), nextBtn=$('nextBtn'), fileInfo=$('fileInfo');
-const aiBar=$('aiBar'), aiProvider=$('aiProvider'), aiBtn=$('aiBtn'), aiNote=$('aiNote');
+const aiBar=$('aiBar'), aiBtn=$('aiBtn'), aiNote=$('aiNote');
 const ySel=$('ySel'), xSel=$('xSel'), gSel=$('gSel'), csvBtn=$('csvBtn');
 const chartWrap=$('chartwrap'), filtersEl=$('filters');
 const tablewrap=$('tablewrap'), chipsEl=$('chips');
@@ -782,10 +781,10 @@ aiBtn.addEventListener('click',()=>runAISuggest(curFit));
 
 async function runAISuggest(i){
   if(i<0||i>=files.length) return;
-  aiBtn.disabled=true; aiNote.textContent=''; setStatus(`AI (${aiProvider.value}) analyzing…`);
+  aiBtn.disabled=true; aiNote.textContent=''; setStatus('Local AI analyzing…');
   try{
     const resp=await fetch('/ai_suggest',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({xy:files[i].text, provider:aiProvider.value, theme:theme()})});
+      body:JSON.stringify({xy:files[i].text, theme:theme()})});
     const d=await resp.json();
     if(!resp.ok){ setStatus('AI error: '+(d.error||resp.statusText),true); aiBtn.disabled=false; return; }
     const s=d.suggestion||{};
@@ -1147,13 +1146,13 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, "application/json", json.dumps(result).encode("utf-8"))
 
     def _handle_ai_suggest(self) -> None:
-        """AI-assisted deconvolution: features → LLM (Claude/Ollama) → NETL fit."""
+        """AI-assisted deconvolution: features → local Ollama model → NETL fit."""
         import ai_suggest  # lazy: only needed when the AI button is used
         payload = self._read_json()
         pattern = XRDPattern.from_text(payload.get("xy", ""))
         feats = ai_suggest.compute_features(pattern.two_theta, pattern.intensity)
         try:
-            dec = ai_suggest.suggest(feats, payload.get("provider"), payload.get("model"))
+            dec = ai_suggest.suggest(feats, payload.get("model"))
         except Exception as exc:  # noqa: BLE001 — surface provider/credential errors cleanly
             self._send(502, "application/json",
                        json.dumps({"error": f"AI provider error — {exc}"}).encode("utf-8"))

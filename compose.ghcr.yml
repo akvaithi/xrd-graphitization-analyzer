@@ -9,12 +9,9 @@ services:
       - "8000:8000"          # host:container — change the host side if 8000 is taken
     restart: unless-stopped
     # (image already defines PORT=8000 and a HEALTHCHECK)
-    # Optional AI deconvolution assist (the "Suggest deconvolution" button).
-    # The UI toggles provider per request; these supply the credential/host:
+    # Optional local AI deconvolution assist (the "Suggest deconvolution" button).
+    # Fully local via Ollama — no cloud, no API key. Point it at your Ollama host:
     # environment:
-    #   - AI_PROVIDER=claude                  # default provider ("claude" | "ollama")
-    #   - ANTHROPIC_API_KEY=sk-ant-...        # Claude path (cloud)
-    #   - ANTHROPIC_MODEL=claude-opus-4-8
-    #   - OLLAMA_HOST=http://host.docker.internal:11434   # Ollama path (local, private)
-    #   - OLLAMA_MODEL=gemma3:4b
-    # No key/host set → the AI button errors cleanly; the rest of the app works.
+    #   - OLLAMA_HOST=http://host.docker.internal:11434   # Ollama running on the host
+    #   - OLLAMA_MODEL=gemma3:4b                           # best local model (benchmarked)
+    # Not set / Ollama unreachable → the AI button errors cleanly; the rest works.
