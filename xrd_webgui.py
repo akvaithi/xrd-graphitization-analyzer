@@ -785,7 +785,12 @@ async function runAISuggest(i){
   try{
     const resp=await fetch('/ai_suggest',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({xy:files[i].text, theme:theme()})});
-    const d=await resp.json();
+    const text=await resp.text();
+    let d;
+    try{ d=JSON.parse(text); }
+    catch(_){ setStatus(`AI error (HTTP ${resp.status}): non-JSON response — `+
+      (text? text.replace(/<[^>]+>/g,' ').trim().slice(0,160) : 'empty (Ollama unreachable or a proxy/gateway timeout)'), true);
+      aiBtn.disabled=false; return; }
     if(!resp.ok){ setStatus('AI error: '+(d.error||resp.statusText),true); aiBtn.disabled=false; return; }
     const s=d.suggestion||{};
     if(s.amorphous_invalid){ aiNote.textContent='⚠︎ too amorphous for the method — '+(s.rationale||''); setStatus('AI: amorphous'); aiBtn.disabled=false; return; }
