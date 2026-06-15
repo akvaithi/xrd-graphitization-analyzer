@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import urllib.error
 import urllib.request
 import warnings
 
@@ -121,28 +122,44 @@ def compute_features(two_theta, intensity, low=24.0, high=30.0) -> dict:
 # Providers (stdlib HTTP only)
 # --------------------------------------------------------------------------
 
-def _http_json(url, payload, headers, timeout=120):
+def _http_json(url, payload, headers, timeout=60):
     req = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                  headers={"content-type": "application/json", **headers})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        # Surface the API's own error message (e.g. which field it rejected),
+        # not just "HTTP Error 400: Bad Request".
+        detail = e.read().decode("utf-8", "replace")[:600]
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        raise RuntimeError(f"HTTP {e.code} from {host} — {detail}") from None
+
+
+_CLAUDE_TOOL = "report_deconvolution_setup"
 
 
 def _ask_claude(features, model, api_key):
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY not set")
+    # Force a schema-conforming answer via tool use (the GA, reliable path) rather
+    # than free-text JSON: a single tool whose input_schema IS our schema, with
+    # tool_choice pinned to it. Claude must call it, so the args are valid JSON.
     body = {
         "model": model, "max_tokens": 1024,
         "temperature": 0,   # greedy decoding → reproducible setup for identical features
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user",
                       "content": "Features (JSON):\n" + json.dumps(features, indent=2)}],
-        "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
+        "tools": [{"name": _CLAUDE_TOOL,
+                   "description": "Report the chosen NETL deconvolution setup.",
+                   "input_schema": SCHEMA}],
+        "tool_choice": {"type": "tool", "name": _CLAUDE_TOOL},
     }
     resp = _http_json("https://api.anthropic.com/v1/messages", body,
                       {"x-api-key": api_key, "anthropic-version": "2023-06-01"})
-    text = next(b["text"] for b in resp["content"] if b.get("type") == "text")
-    return json.loads(text)
+    block = next(b for b in resp["content"] if b.get("type") == "tool_use")
+    return block["input"]
 
 
 def suggest(features: dict, model: str | None = None,
