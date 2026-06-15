@@ -132,8 +132,8 @@ def _ask_claude(features, model, api_key):
     if not api_key:
         raise ValueError("ANTHROPIC_API_KEY not set")
     body = {
-        "model": model, "max_tokens": 2000,
-        "thinking": {"type": "adaptive"},
+        "model": model, "max_tokens": 1024,
+        "temperature": 0,   # greedy decoding → reproducible setup for identical features
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user",
                       "content": "Features (JSON):\n" + json.dumps(features, indent=2)}],
