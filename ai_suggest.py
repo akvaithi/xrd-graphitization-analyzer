@@ -1,15 +1,16 @@
 """
-ai_suggest.py — local AI deconvolution suggester (Ollama only).
+ai_suggest.py — cloud AI deconvolution suggester (Anthropic Claude).
 
-Given an XRD (002) spectrum it computes numeric features and asks a local Ollama
-model to choose the NETL deconvolution setup — peak count, turbostratic shoulder
-position, background. It does NOT compute DG%: the deterministic pipeline does
-that. Runs entirely on your machine (no cloud, no API key); stdlib-only (urllib)
-so the container needs no extra dependencies.
+Given an XRD (002) spectrum it computes numeric features and asks Claude to choose
+the NETL deconvolution setup — peak count, turbostratic shoulder position,
+background. It does NOT compute DG%: the deterministic pipeline does that. Used by
+the web/Docker app, where inference is offloaded to the API so the server stays a
+thin tier (the native desktop app uses a bundled local Ollama model instead).
+Stdlib-only (urllib) so the container needs no extra dependencies — just a key.
 
 Config (env, overridable per call):
-    OLLAMA_HOST      default "http://localhost:11434"
-    OLLAMA_MODEL     default "gemma3:4b"  (best local model in our benchmark)
+    ANTHROPIC_API_KEY   Claude API key (required)
+    ANTHROPIC_MODEL     default "claude-opus-4-8"
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from scipy.optimize import curve_fit
 
 warnings.simplefilter("ignore")
 
-DEFAULT_OLLAMA_MODEL = "gemma3:4b"
+DEFAULT_CLAUDE_MODEL = "claude-opus-4-8"
 
 SYSTEM_PROMPT = """You are an expert XRD analyst applying the NETL standard procedure to deconvolve the carbon (002) reflection of Fe-catalyzed petroleum-coke graphite, to SET UP a Degree of Graphitization calculation. You decide ONLY the deconvolution setup; you do NOT compute DG%.
 
@@ -127,22 +128,26 @@ def _http_json(url, payload, headers, timeout=120):
         return json.loads(r.read().decode())
 
 
-def _ask_ollama(features, model, host):
+def _ask_claude(features, model, api_key):
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY not set")
     body = {
-        "model": model, "stream": False, "format": SCHEMA,
-        "options": {"temperature": 0},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": "Features (JSON):\n" + json.dumps(features, indent=2)},
-        ],
+        "model": model, "max_tokens": 2000,
+        "thinking": {"type": "adaptive"},
+        "system": SYSTEM_PROMPT,
+        "messages": [{"role": "user",
+                      "content": "Features (JSON):\n" + json.dumps(features, indent=2)}],
+        "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
     }
-    resp = _http_json(host.rstrip("/") + "/api/chat", body, {}, timeout=300)
-    return json.loads(resp["message"]["content"])
+    resp = _http_json("https://api.anthropic.com/v1/messages", body,
+                      {"x-api-key": api_key, "anthropic-version": "2023-06-01"})
+    text = next(b["text"] for b in resp["content"] if b.get("type") == "text")
+    return json.loads(text)
 
 
 def suggest(features: dict, model: str | None = None,
-            *, ollama_host: str | None = None) -> dict:
-    """Return the deconvolution decision dict from the local Ollama model."""
-    return _ask_ollama(features,
-                       model or os.environ.get("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
-                       ollama_host or os.environ.get("OLLAMA_HOST", "http://localhost:11434"))
+            *, api_key: str | None = None) -> dict:
+    """Return the deconvolution decision dict from Claude."""
+    return _ask_claude(features,
+                       model or os.environ.get("ANTHROPIC_MODEL", DEFAULT_CLAUDE_MODEL),
+                       api_key or os.environ.get("ANTHROPIC_API_KEY", ""))

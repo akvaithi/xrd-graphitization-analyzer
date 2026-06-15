@@ -8,10 +8,16 @@ services:
     ports:
       - "8000:8000"          # host:container — change the host side if 8000 is taken
     restart: unless-stopped
+
+    # --- AI deconvolution assist (the "Suggest deconvolution" button) -----------
+    # The web/Docker build uses the Anthropic Claude API so the server stays a thin
+    # tier (inference is offloaded to the cloud — good for low-power servers). The
+    # native desktop app uses a bundled LOCAL model instead and needs none of this.
+    # Get a key at https://console.anthropic.com/ and put it in a .env next to this
+    # file (ANTHROPIC_API_KEY=sk-ant-...) — never commit the key.
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # - ANTHROPIC_MODEL=claude-opus-4-8   # optional override (this is the default)
+    # Key not set → the AI button errors cleanly; the rest of the app works.
+
     # (image already defines PORT=8000 and a HEALTHCHECK)
-    # Optional local AI deconvolution assist (the "Suggest deconvolution" button).
-    # Fully local via Ollama — no cloud, no API key. Point it at your Ollama host:
-    # environment:
-    #   - OLLAMA_HOST=http://host.docker.internal:11434   # Ollama running on the host
-    #   - OLLAMA_MODEL=gemma3:4b                           # best local model (benchmarked)
-    # Not set / Ollama unreachable → the AI button errors cleanly; the rest works.

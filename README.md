@@ -21,15 +21,17 @@ number is always computed deterministically.
 | **Native macOS app** ([native/](native/), Swift) | desktop, offline | interactive deconvolution, native charts, pure-Swift engine |
 
 **Validated against the postdoc's OriginLab gold standard** (mean abs error):
-expert hand-placement **0.43%**, AI-assisted **0.99%** (local Ollama gemma3:4b),
-fully-automatic **1.16%** — all within the deconvolution's own uncertainty. The
-fit math is identical across the Python and Swift engines.
+expert hand-placement **0.43%**, AI-assisted **~0.9–1.0%** (Claude / local
+gemma3:4b), fully-automatic **1.16%** — all within the deconvolution's own
+uncertainty. The fit math is identical across the Python and Swift engines.
 
-**AI deconvolution assist (optional, fully local).** A local **Ollama** model
-(gemma3:4b) proposes the deconvolution setup from *derived numeric features*
-(not raw data); the human confirms; DG is computed locally. Everything runs on
-your machine — **no cloud, no API key** — so it's safe for sensitive data.
-Cu Kα λ = 1.54187 Å throughout.
+**AI deconvolution assist (optional).** The assist proposes the deconvolution
+setup from *derived numeric features* (not raw data); the human confirms; DG is
+always computed locally by the deterministic engine. The two builds differ only
+in where inference runs: the **web/Docker app uses the Anthropic Claude API** (so
+the server stays a thin tier — ideal for low-power hosts), while the **native
+desktop app uses a bundled local model** (gemma3:4b) that needs no setup, no key,
+and never leaves the machine. Cu Kα λ = 1.54187 Å throughout.
 
 ---
 
@@ -104,22 +106,27 @@ temperature, dwell time, sample form (puck/powder), and wash state — by a
 tolerant regex parser ([run_parser.py](run_parser.py)) that doesn't care about
 separator or casing.
 
-### AI deconvolution assist (optional, fully local)
+### AI deconvolution assist (optional)
 
 The NETL deconvolution needs a human to choose the setup (1 vs 2 peaks, where the
 turbostratic shoulder sits, whether to subtract background). The **Suggest
-deconvolution** button on the Analyze tab automates that first pass with a **local
-Ollama model (gemma3:4b)** — no cloud, no API key — which the human then confirms.
-DG% is always computed locally by the deterministic engine
+deconvolution** button on the Analyze tab automates that first pass, which the
+human then confirms. DG% is always computed locally by the deterministic engine
 ([ai_suggest.py](ai_suggest.py) sends only *derived numeric features*, not raw
-data). Validated against the postdoc gold standard: **~0.99% DG MAE**, beating
-fully-automatic (1.16%) and approaching the expert hand-fit (0.43%) — a small
-local model that runs entirely on the machine, so it's safe for sensitive data.
-Benchmark across local models (8 spectra): gemma3:4b **0.99%**, qwen2.5 / llama3.1
-**1.05%**, phi4 **1.08%**, gemma3:12b / qwen2.5:14b **1.18%** — *bigger was not
-better*, so gemma3:4b is the default. Configure via env vars (see
-[compose.ghcr.yml](compose.ghcr.yml)): `OLLAMA_HOST` / `OLLAMA_MODEL`. Needs a
-running Ollama with the model pulled (`ollama pull gemma3:4b`).
+data). Validated against the postdoc gold standard: **~0.9–1.0% DG MAE**, beating
+fully-automatic (1.16%) and approaching the expert hand-fit (0.43%).
+
+**The web/Docker app uses the Anthropic Claude API.** This keeps the server a thin
+tier — inference is offloaded to the cloud, so it runs fine on low-power hosts
+that can't do local LLM inference. Set `ANTHROPIC_API_KEY` (see
+[compose.ghcr.yml](compose.ghcr.yml)); optional `ANTHROPIC_MODEL`
+(default `claude-opus-4-8`). No key → the button errors cleanly; the rest works.
+
+The **native desktop app** instead uses a **bundled local model** (gemma3:4b) — no
+cloud, no key, nothing leaves the machine (see below). Local-model benchmark
+(8 spectra): gemma3:4b **0.99%**, qwen2.5 / llama3.1 **1.05%**, phi4 **1.08%**,
+gemma3:12b / qwen2.5:14b **1.18%** — *bigger was not better*, so gemma3:4b is the
+bundled default.
 
 ## Desktop app (macOS .app / Windows .exe)
 

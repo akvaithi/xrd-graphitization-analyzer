@@ -617,7 +617,7 @@ PAGE_HTML = """<!DOCTYPE html>
     <span id="fileInfo" class="muted"></span>
   </div>
   <div class="ctrls" id="aiBar" style="display:none">
-    <button id="aiBtn" class="mini">✨ Suggest deconvolution (local AI)</button>
+    <button id="aiBtn" class="mini">✨ Suggest deconvolution (Claude)</button>
     <span id="aiNote" class="muted"></span>
   </div>
   <div class="grid2">
@@ -781,7 +781,7 @@ aiBtn.addEventListener('click',()=>runAISuggest(curFit));
 
 async function runAISuggest(i){
   if(i<0||i>=files.length) return;
-  aiBtn.disabled=true; aiNote.textContent=''; setStatus('Local AI analyzing…');
+  aiBtn.disabled=true; aiNote.textContent=''; setStatus('Claude analyzing…');
   try{
     const resp=await fetch('/ai_suggest',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({xy:files[i].text, theme:theme()})});
@@ -1151,7 +1151,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, "application/json", json.dumps(result).encode("utf-8"))
 
     def _handle_ai_suggest(self) -> None:
-        """AI-assisted deconvolution: features → local Ollama model → NETL fit."""
+        """AI-assisted deconvolution: features → Claude API → NETL fit."""
         import ai_suggest  # lazy: only needed when the AI button is used
         payload = self._read_json()
         pattern = XRDPattern.from_text(payload.get("xy", ""))
