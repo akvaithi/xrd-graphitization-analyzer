@@ -147,7 +147,9 @@ def _ask_claude(features, model, api_key):
     # tool_choice pinned to it. Claude must call it, so the args are valid JSON.
     body = {
         "model": model, "max_tokens": 1024,
-        "temperature": 0,   # greedy decoding → reproducible setup for identical features
+        # NB: temperature is deprecated/unsupported on claude-opus-4-8, so it's
+        # omitted. Determinism instead comes from tool-use forcing + a tightly
+        # constrained schema over fixed numeric features.
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user",
                       "content": "Features (JSON):\n" + json.dumps(features, indent=2)}],
