@@ -1,9 +1,0 @@
-# Extra deps to build the desktop apps (on top of requirements.txt).
-#   pip install -r requirements.txt -r requirements-build.txt
-#   pyinstaller packaging/xrd.spec --noconfirm
-pyinstaller>=6.3
-pystray>=0.19
-Pillow>=10.0
-# macOS tray backend (pystray uses PyObjC on darwin)
-pyobjc-framework-Cocoa>=10.0 ; sys_platform == "darwin"
-pyobjc-framework-Quartz>=10.0 ; sys_platform == "darwin"
