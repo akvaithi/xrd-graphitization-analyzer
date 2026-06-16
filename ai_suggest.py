@@ -38,7 +38,8 @@ Rules:
 2. peak_count=1 ONLY if truly symmetric: low_angle_residual_fraction < ~0.015 AND dR2 < ~0.0005. The exception, not the norm. (When peak_count=1, still output a plausible turbostratic_2theta; it is ignored.)
 3. amorphous_invalid=true only if no resolvable (002) peak (very broad/weak, low SNR).
 4. subtract_background only if an obvious sloped background; else false.
-Respond with ONLY a JSON object with keys: peak_count (1 or 2), turbostratic_2theta (number), subtract_background (bool), amorphous_invalid (bool), confidence (0-1), rationale (short string)."""
+5. SPECIMEN DISPLACEMENT (sample-height error): a well-crystallized graphite (002) sits at ~26.50-26.60 (Cu K-alpha). If the peak is SHARP and SMOOTH (single_peak_FWHM <= ~0.18 AND single_peak_R2 >= ~0.99) - i.e. clearly well graphitized - but single_peak_center is notably BELOW ~26.50, that is most likely a sample-displacement shift, NOT low graphitization. Then set displacement_suspected=true and suggested_002_anchor to the expected position (26.54). A BROAD peak at low angle is GENUINE low graphitization - set displacement_suspected=false, suggested_002_anchor=0. Be CONSERVATIVE: only flag displacement when the peak is sharp/smooth AND below 26.50; when unsure, false. The peak position is the measurement, so this correction assumes a well-ordered graphitic phase and the human confirms it.
+Respond with ONLY a JSON object with keys: peak_count (1 or 2), turbostratic_2theta (number), subtract_background (bool), amorphous_invalid (bool), displacement_suspected (bool), suggested_002_anchor (number; 0 if none), confidence (0-1), rationale (short string)."""
 
 # Number-typed turbostratic (not nullable) so the schema works on Ollama too.
 SCHEMA = {
@@ -48,11 +49,14 @@ SCHEMA = {
         "turbostratic_2theta": {"type": "number"},
         "subtract_background": {"type": "boolean"},
         "amorphous_invalid": {"type": "boolean"},
+        "displacement_suspected": {"type": "boolean"},
+        "suggested_002_anchor": {"type": "number"},
         "confidence": {"type": "number"},
         "rationale": {"type": "string"},
     },
     "required": ["peak_count", "turbostratic_2theta", "subtract_background",
-                 "amorphous_invalid", "confidence", "rationale"],
+                 "amorphous_invalid", "displacement_suspected", "suggested_002_anchor",
+                 "confidence", "rationale"],
     "additionalProperties": False,
 }
 

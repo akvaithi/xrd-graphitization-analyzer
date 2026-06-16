@@ -285,6 +285,9 @@ struct DetailView: View {
                     subtractBg = s.subtractBackground
                     if let t = s.turbostraticCenter { turboCenter = t; turboLocked = true }
                     else { turboLocked = false }
+                    if s.displacementSuspected, s.suggested002Anchor > 0 {
+                        anchorOn = true; anchorTarget = s.suggested002Anchor
+                    }
                     refit()
                     aiNote = ((s.confidence < 0.8) ? "Review suggested (low confidence). " : "") + s.rationale
                     if let r = result {

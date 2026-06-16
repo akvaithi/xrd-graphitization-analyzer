@@ -105,8 +105,12 @@ header — analysis runs automatically and the same files feed every tab (the
 switch is seamless, no re-upload). The server honours `$PORT`/`$HOST` (binds
 `0.0.0.0` when `$PORT` is set), so it runs unchanged on container hosts.
 
-- **Analyze** — per-file standard-pipeline fit with a high-resolution plot (raw
-  points + deconvolved peaks); page through files with the run selector.
+- **Analyze** — per-file NETL fit with a high-resolution plot (raw points +
+  deconvolved peaks) and a **manual control panel at parity with the desktop app**:
+  peak count (1/2), lock turbostratic, subtract background, and **(002)
+  displacement calibration** — plus the AI **Suggest** button, which fills those
+  controls from its decision (and can flag a displacement shift). Page through
+  files with the run selector.
 - **Compare** — parsed-parameter table + **one** comparison chart. Pick X / Y /
   colour-by, then add or remove points with **per-group and per-run checkboxes**
   (e.g. hide a whole carbon type or a single outlier run). The trend line follows

@@ -553,6 +553,11 @@ PAGE_HTML = """<!DOCTYPE html>
   .ctrls label { color:var(--label2); font-size:12px; display:flex; gap:7px; align-items:center; }
   .ctrls input[type=range] { vertical-align:middle; }
   .tog { display:flex; gap:7px; align-items:center; color:var(--label)!important; }
+  input.num2 { font-family:inherit; font-size:12px; color:var(--label); background:var(--bg2);
+    border:0.5px solid var(--sep); border-radius:6px; padding:3px 6px; width:74px; }
+  input.num2:disabled { opacity:0.45; }
+  .ctrls select { font-family:inherit; font-size:12px; color:var(--label); background:var(--bg2);
+    border:0.5px solid var(--sep); border-radius:6px; padding:3px 6px; }
 
   /* Checklists */
   .checks { font-size:12px; }
@@ -633,6 +638,16 @@ PAGE_HTML = """<!DOCTYPE html>
   <div class="ctrls" id="aiBar" style="display:none">
     <button id="aiBtn" class="mini">✨ Suggest deconvolution (Claude)</button>
     <span id="aiNote" class="muted"></span>
+  </div>
+  <div class="ctrls" id="manualBar" style="display:none">
+    <label class="tog">Peaks
+      <select id="mPeaks"><option value="2">2</option><option value="1">1</option></select></label>
+    <label class="tog"><input type="checkbox" id="mTurboLock"> Lock turbostratic</label>
+    <input id="mTurbo" class="num2" type="number" step="0.001" min="25.1" max="26.45" value="26.20" disabled>
+    <label class="tog"><input type="checkbox" id="mBg"> Subtract background</label>
+    <label class="tog"><input type="checkbox" id="mCal"> Calibrate (002) to</label>
+    <input id="mAnchor" class="num2" type="number" step="0.01" value="26.54" disabled><span class="muted">°</span>
+    <span id="mOffset" class="muted"></span>
   </div>
   <div class="grid2">
     <div class="card" id="results"><div class="placeholder">Choose .xy file(s) — analysis runs automatically.</div></div>
@@ -719,6 +734,8 @@ const fileInput=$('file'), fnameEl=$('fname'), statusEl=$('status');
 const resultsEl=$('results'), plotWrap=$('plotwrap');
 const fileBar=$('fileBar'), fileSel=$('fileSel'), prevBtn=$('prevBtn'), nextBtn=$('nextBtn'), fileInfo=$('fileInfo');
 const aiBar=$('aiBar'), aiBtn=$('aiBtn'), aiNote=$('aiNote');
+const manualBar=$('manualBar'), mPeaks=$('mPeaks'), mTurboLock=$('mTurboLock'), mTurbo=$('mTurbo'),
+      mBg=$('mBg'), mCal=$('mCal'), mAnchor=$('mAnchor'), mOffset=$('mOffset');
 const ySel=$('ySel'), xSel=$('xSel'), gSel=$('gSel'), csvBtn=$('csvBtn');
 const chartWrap=$('chartwrap'), filtersEl=$('filters');
 const tablewrap=$('tablewrap'), chipsEl=$('chips');
@@ -784,6 +801,7 @@ async function runBatch(){
 function buildFileSel(){
   fileBar.style.display = files.length>1?'flex':'none';
   aiBar.style.display = files.length?'flex':'none';
+  manualBar.style.display = files.length?'flex':'none';
   fileSel.innerHTML = rows.map((r,i)=>{
     const tag = r.error?'ERROR':(r.DG!=null?`DG ${r.DG.toFixed(2)}%`:'—');
     return `<option value="${i}">${i+1}/${rows.length}  ${r.label||r.file}  —  ${tag}</option>`;
@@ -808,21 +826,27 @@ async function runAISuggest(i){
     if(!resp.ok){ setStatus('AI error: '+(d.error||resp.statusText),true); aiBtn.disabled=false; return; }
     const s=d.suggestion||{};
     if(s.amorphous_invalid){ aiNote.textContent='⚠︎ too amorphous for the method — '+(s.rationale||''); setStatus('AI: amorphous'); aiBtn.disabled=false; return; }
-    const res=d.result;
-    if(!res){ setStatus('AI: '+(d.error||'no fit'),true); aiBtn.disabled=false; return; }
-    if(res.plot_png) plotWrap.innerHTML=`<img class="plot" src="${res.plot_png}" alt="AI fit">`;
-    renderResultsNetl(res, (rows[i]&&rows[i].label)||files[i].name, files[i].name, s, d.quality);
+    // populate the manual controls from the suggestion, then re-fit through /fit
+    mPeaks.value=String(s.peak_count||2); mTurboLock.disabled=mPeaks.value!=='2';
+    mTurboLock.checked=mPeaks.value==='2'; mTurbo.disabled=!mTurboLock.checked;
+    if(s.turbostratic_2theta) mTurbo.value=(+s.turbostratic_2theta).toFixed(3);
+    mBg.checked=!!s.subtract_background;
+    if(s.displacement_suspected && s.suggested_002_anchor){
+      mCal.checked=true; mAnchor.disabled=false; mAnchor.value=(+s.suggested_002_anchor).toFixed(2);
+    }
+    await reFit();
     const c=s.confidence||0;
     aiNote.innerHTML=`<b style="color:${c<0.8?'var(--orange)':'var(--green)'}">${(c*100).toFixed(0)}% conf</b>`+
-      (c<0.8?' · review suggested':'')+` · ${s.peak_count} peak(s), turbo ${(+s.turbostratic_2theta).toFixed(3)}° · ${s.rationale}`;
-    setStatus(`AI done — DG ${res.DG_percent.toFixed(2)}%`);
+      (c<0.8?' · review suggested':'')+` · ${s.peak_count} peak(s), turbo ${(+s.turbostratic_2theta).toFixed(3)}°`+
+      (s.displacement_suspected?` · ⚠ displacement→${(+s.suggested_002_anchor).toFixed(2)}°`:'')+` · ${s.rationale}`;
+    setStatus('AI applied — review the controls');
   }catch(err){ setStatus('AI request failed: '+err,true); }
   finally{ aiBtn.disabled=false; }
 }
 function renderResultsNetl(d, title, sub, s, q){
   const pct=x=>(x*100).toFixed(2)+'%';
   let h=fileHead(title,sub)+
-    `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization (AI-assisted)</div>`+
+    `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization</div>`+
     `<div class="dg">${d.DG_percent.toFixed(2)} %</div><div class="cap">${d.method_name}</div></div>`+
     qualityBanner(q)+
     `<div class="section">Graphitic peak</div>`+
@@ -838,33 +862,54 @@ function renderResultsNetl(d, title, sub, s, q){
      row('X_g / X_t',pct(d.area_fraction_graphitic)+' / '+pct(d.area_fraction_turbostratic))+
      row("d′ weighted",d.d_spacing_weighted_angstrom.toFixed(6),'Å')+
      row('Crystallite Lc',d.crystallite_height_Lc_angstrom.toFixed(2),'Å (apparent)')+
-     row('Baseline y0',d.y0.toFixed(3));
+     row('Baseline y0',d.y0.toFixed(3))+
+     (d.two_theta_offset ? row('2θ displacement corr.',(d.two_theta_offset>=0?'+':'')+d.two_theta_offset.toFixed(3),'°') : '');
   resultsEl.innerHTML=h;
 }
 fileSel.addEventListener('change',()=>showFit(parseInt(fileSel.value,10)));
 
+// Manual deconvolution controls (parity with the desktop app) -> /fit (fit_netl).
+function manualParams(){
+  const p={ peak_count:+mPeaks.value, subtract_background:mBg.checked,
+            lock_turbostratic:mTurboLock.checked, turbostratic_2theta:+mTurbo.value };
+  if(mCal.checked) p.anchor_002=+mAnchor.value;
+  return p;
+}
+function resetManual(){
+  mPeaks.value='2'; mTurboLock.checked=false; mTurbo.disabled=true;
+  mBg.checked=false; mCal.checked=false; mAnchor.disabled=true; mOffset.textContent='';
+}
 async function showFit(i){
   if(i<0||i>=files.length) return; curFit=i;
   if(files.length>1){ fileSel.value=String(i); prevBtn.disabled=i===0; nextBtn.disabled=i===files.length-1;
     fileInfo.textContent=`File ${i+1} of ${files.length}`; }
-  let res=fitCache[i];
-  if(!res){
-    plotWrap.innerHTML='<span class="placeholder">Rendering…</span>';
-    try{
-      const resp=await fetch('/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({xy:files[i].text, theme:theme()})});
-      const d=await resp.json();
-      res=(!resp.ok||d.error)?{error:(d.error||resp.statusText)}:{data:d};
-    }catch(err){ res={error:String(err)}; }
-    fitCache[i]=res;
-  }
-  const r=rows[i]||{};
-  const title=r.label||files[i].name;
-  if(res.error){ showError(title, files[i].name, res.error); return; }
-  renderResults(res.data, title, files[i].name);
-  plotWrap.innerHTML = res.data.plot_png?`<img class="plot" src="${res.data.plot_png}" alt="fit plot">`
-                                        :'<span class="placeholder">No plot.</span>';
+  resetManual();
+  aiNote.textContent='';
+  await reFit();
 }
+async function reFit(){
+  const i=curFit; if(i<0||i>=files.length) return;
+  const r=rows[i]||{}, title=r.label||files[i].name;
+  plotWrap.innerHTML='<span class="placeholder">Rendering…</span>';
+  let resp,d;
+  try{
+    resp=await fetch('/fit',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({xy:files[i].text, theme:theme(), ...manualParams()})});
+    d=await resp.json();
+  }catch(err){ showError(title, files[i].name, String(err)); return; }
+  if(!resp.ok||d.error||!d.result){ showError(title, files[i].name, d.error||resp.statusText); return; }
+  renderResultsNetl(d.result, title, files[i].name, null, d.quality);
+  plotWrap.innerHTML = d.result.plot_png?`<img class="plot" src="${d.result.plot_png}" alt="fit plot">`
+                                        :'<span class="placeholder">No plot.</span>';
+  const off=d.result.two_theta_offset||0;
+  mOffset.textContent = off ? `Δ2θ ${off>=0?'+':''}${off.toFixed(3)}°` : '';
+}
+mPeaks.onchange=()=>{ mTurboLock.disabled=mPeaks.value!=='2'; if(mPeaks.value!=='2'){mTurboLock.checked=false;mTurbo.disabled=true;} reFit(); };
+mTurboLock.onchange=()=>{ mTurbo.disabled=!mTurboLock.checked; reFit(); };
+mTurbo.onchange=()=>{ if(mTurboLock.checked) reFit(); };
+mBg.onchange=reFit;
+mCal.onchange=()=>{ mAnchor.disabled=!mCal.checked; reFit(); };
+mAnchor.onchange=()=>{ if(mCal.checked) reFit(); };
 function fileHead(title,sub){
   return `<div class="filetitle">${title}</div>`+
     (sub && sub!==title ? `<div class="filesub">${sub}</div>` : '');
@@ -1121,7 +1166,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.split("?")[0].rstrip("/")
-        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks", "/ai_suggest")):
+        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks", "/ai_suggest", "/fit")):
             self._send(405, "text/plain; charset=utf-8", b"Use POST for this endpoint")
         else:
             # one single-page app; /dashboard and /manual kept as aliases
@@ -1151,6 +1196,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_calc_peaks()
             elif path.endswith("/ai_suggest"):
                 self._handle_ai_suggest()
+            elif path.endswith("/fit"):
+                self._handle_fit()
             else:
                 self._handle_analyze()
         except ValueError as exc:
@@ -1182,6 +1229,32 @@ class Handler(BaseHTTPRequestHandler):
         result = dg_from_peaks(payload.get("peaks", []))   # ValueError → 400
         self._send(200, "application/json", json.dumps(result).encode("utf-8"))
 
+    def _handle_fit(self) -> None:
+        """Manual NETL fit (fit_netl) — peak count, turbostratic, background,
+        specimen-displacement calibration. Mirrors the desktop control panel."""
+        payload = self._read_json()
+        pattern = XRDPattern.from_text(payload.get("xy", ""))
+        pk = int(payload.get("peak_count", 2))
+        lock = bool(payload.get("lock_turbostratic")) and pk == 2
+        anchor = payload.get("anchor_002")
+        out: dict = {}
+        try:
+            res = fit_netl(pattern.two_theta, pattern.intensity, peak_count=pk,
+                           turbostratic_center=payload.get("turbostratic_2theta") if lock else None,
+                           lock_turbostratic=lock,
+                           subtract_background=bool(payload.get("subtract_background")),
+                           anchor_002=float(anchor) if anchor not in (None, "") else None,
+                           two_theta_offset=float(payload.get("two_theta_offset", 0.0) or 0.0))
+            res["plot_png"] = render_plot_netl(pattern, res, payload.get("theme", "dark"))
+            out["result"] = res
+        except (FitError, ValueError) as exc:
+            out["error"] = str(exc)
+        try:
+            out["quality"] = scan_impurities(pattern.two_theta, pattern.intensity)
+        except Exception:  # noqa: BLE001
+            pass
+        self._send(200, "application/json", json.dumps(out).encode("utf-8"))
+
     def _handle_ai_suggest(self) -> None:
         """AI-assisted deconvolution: features → Claude API → NETL fit."""
         import ai_suggest  # lazy: only needed when the AI button is used
@@ -1197,12 +1270,17 @@ class Handler(BaseHTTPRequestHandler):
         out: dict = {"suggestion": dec, "features": feats,
                      "confidence": dec.get("confidence"), "rationale": dec.get("rationale")}
         if not dec.get("amorphous_invalid"):
+            # Manual calibration from the UI overrides the AI's displacement call.
+            anchor = payload.get("anchor_002")
+            if anchor is None and dec.get("displacement_suspected") and dec.get("suggested_002_anchor"):
+                anchor = float(dec["suggested_002_anchor"])
             try:
                 res = fit_netl(pattern.two_theta, pattern.intensity,
                                peak_count=int(dec.get("peak_count", 2)),
                                turbostratic_center=dec.get("turbostratic_2theta"),
                                lock_turbostratic=int(dec.get("peak_count", 2)) == 2,
-                               subtract_background=bool(dec.get("subtract_background")))
+                               subtract_background=bool(dec.get("subtract_background")),
+                               anchor_002=anchor)
                 res["plot_png"] = render_plot_netl(pattern, res, payload.get("theme", "dark"))
                 out["result"] = res
             except (FitError, ValueError) as exc:
