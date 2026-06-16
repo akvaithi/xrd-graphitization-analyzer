@@ -56,6 +56,15 @@ carbonate residue (Fe, Fe₃C, CaO, calcite) by phase and intensity relative to 
 (002) — these all lie outside the fit window, so they never affect DG, but the
 flag tells you whether acid washing was complete (mirrored in web + desktop apps).
 
+**Specimen-displacement calibration (optional).** A misaligned sample (off the
+Bragg–Brentano focusing circle) shifts every peak by Δ2θ ≈ −(2s/R)·cosθ, biasing
+d-spacing and DG. Anchor the measured (002) to its known position (e.g. 26.54°)
+and the whole pattern is shifted by that constant offset before fitting; the
+applied Δ2θ is reported so the correction is transparent and reproducible
+(`fit_netl(..., anchor_002=26.54)` / desktop "Calibrate (002) position" toggle).
+Anchoring assumes a well-ordered graphitic phase — an internal standard is the
+rigorous alternative.
+
 Validated against the NETL/postdoc OriginLab fits: mean abs error ≈ 1.3 DG% across
 the GPC/CPC sample set. X-ray wavelength is fixed to Cu Kα **λ = 1.54187 Å**.
 `OptimizeWarning` / fit failures are caught and reported cleanly.

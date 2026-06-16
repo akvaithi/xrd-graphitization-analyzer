@@ -50,6 +50,7 @@ while i < args.count {
     switch args[i] {
     case "--turbo": opt.lockTurbostratic = true; opt.turbostraticCenter = Double(args[i + 1]); i += 2
     case "--peaks": opt.peakCount = Int(args[i + 1]) ?? 2; i += 2
+    case "--anchor": opt.anchor002 = Double(args[i + 1]); i += 2
     default: path = args[i]; i += 1
     }
 }

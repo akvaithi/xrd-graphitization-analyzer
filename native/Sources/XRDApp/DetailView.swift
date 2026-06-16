@@ -9,6 +9,8 @@ struct DetailView: View {
     @State private var subtractBg = false
     @State private var turboCenter = 26.2
     @State private var turboLocked = false
+    @State private var anchorOn = false
+    @State private var anchorTarget = 26.54
     @State private var result: DGResult?
     @State private var fitError: String?
     @State private var quality: ImpurityScan?
@@ -85,6 +87,24 @@ struct DetailView: View {
 
                         Toggle("Subtract sloped background (24–26.5°)", isOn: $subtractBg)
                             .onChange(of: subtractBg) { refit() }
+
+                        Divider()
+                        Toggle("Calibrate (002) position (specimen displacement)", isOn: $anchorOn)
+                            .onChange(of: anchorOn) { refit() }
+                        if anchorOn {
+                            HStack(spacing: 8) {
+                                Text("Anchor (002) to").foregroundStyle(.secondary).font(.caption)
+                                TextField("26.54", value: $anchorTarget, format: .number)
+                                    .textFieldStyle(.roundedBorder).frame(width: 70)
+                                    .onSubmit { refit() }
+                                Text("°").foregroundStyle(.secondary)
+                                Spacer()
+                                if let r = result, r.twoThetaOffset != 0 {
+                                    Text(String(format: "Δ2θ %+.3f°", r.twoThetaOffset))
+                                        .font(.caption).monospacedDigit().foregroundStyle(.tint)
+                                }
+                            }
+                        }
                     }
                     .padding(.vertical, 4)
                 }
@@ -152,8 +172,10 @@ struct DetailView: View {
                                     r.areaFractionGraphitic * 100, r.areaFractionTurbostratic * 100)),
                 ("d′ weighted", ang(r.dPrimeWeighted)),
                 ("Crystallite Lc", String(format: "%.1f Å (apparent)", r.crystalliteLc)),
-                ("Baseline y0", num(r.y0, 3)),
-                ("Wavelength λ", String(format: "%.5f Å", r.wavelength))])
+                ("Baseline y0", num(r.y0, 3))]
+                + (r.twoThetaOffset != 0
+                   ? [("2θ displacement corr.", String(format: "%+.3f°", r.twoThetaOffset))] : [])
+                + [("Wavelength λ", String(format: "%.5f Å", r.wavelength))])
         }
     }
 
@@ -175,7 +197,7 @@ struct DetailView: View {
     // MARK: fit
 
     private func seedFromAuto() {
-        peakCount = 2; subtractBg = false; turboLocked = false
+        peakCount = 2; subtractBg = false; turboLocked = false; anchorOn = false
         quality = file.pattern.map { ImpurityScan.scan($0) }
         if let p = file.pattern, let auto = try? GraphitizationAnalyzer(p).run(),
            let t = auto.turbostratic {
@@ -192,6 +214,7 @@ struct DetailView: View {
         o.subtractBackground = subtractBg
         o.lockTurbostratic = turboLocked
         o.turbostraticCenter = turboLocked ? turboCenter : nil
+        o.anchor002 = (anchorOn && anchorTarget > 0) ? anchorTarget : nil
         do { result = try GraphitizationAnalyzer(p).run(o); fitError = nil }
         catch { result = nil; fitError = String(describing: error) }
     }

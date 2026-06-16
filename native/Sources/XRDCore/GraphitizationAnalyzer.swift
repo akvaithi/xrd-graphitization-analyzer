@@ -27,6 +27,11 @@ public struct FitOptions: Sendable, Equatable {
     public var graphiticCenter: Double? = nil     // optional seed for the (002) centre
     public var turbostraticCenter: Double? = nil  // human-set shoulder position
     public var lockTurbostratic: Bool = false     // fix turbostratic xc to the value above
+    // Specimen-displacement calibration: shift the whole pattern in 2θ before
+    // fitting. Set anchor002 to put the measured (002) at that angle (e.g. 26.54),
+    // or twoThetaOffset for a raw constant shift.
+    public var twoThetaOffset: Double = 0.0
+    public var anchor002: Double? = nil
     public init() {}
 }
 
@@ -44,6 +49,7 @@ public struct DGResult: Sendable {
     public let crystalliteLc: Double
     public let fitR2: Double
     public let dgPercent: Double
+    public let twoThetaOffset: Double            // applied specimen-displacement shift
     public let pointsX: [Double]                 // fitted window (raw, or bg-subtracted)
     public let pointsY: [Double]
 }
@@ -69,8 +75,20 @@ public struct GraphitizationAnalyzer {
         SCHERRER_K * wavelength / ((w * .pi / 180.0) * cos((xc / 2.0) * .pi / 180.0))
     }
 
+    /// Constant 2θ offset that puts the measured (002) at `target` (displacement fix).
+    public func anchorOffset(_ target: Double, _ opt: FitOptions = FitOptions()) -> Double {
+        var o = FitOptions()
+        o.peakCount = 1; o.windowLow = opt.windowLow; o.windowHigh = opt.windowHigh
+        guard let r = try? run(o) else { return 0 }
+        return target - r.graphitic.xc
+    }
+
     public func run(_ opt: FitOptions = FitOptions()) throws -> DGResult {
-        var (x, y) = pattern.window(opt.windowLow, opt.windowHigh)
+        // Specimen-displacement calibration: shift the whole pattern in 2θ first.
+        let offset = opt.anchor002.map { anchorOffset($0, opt) } ?? opt.twoThetaOffset
+        let src = offset == 0 ? pattern
+            : XRDPattern(twoTheta: pattern.twoTheta.map { $0 + offset }, intensity: pattern.intensity)
+        var (x, y) = src.window(opt.windowLow, opt.windowHigh)
         if x.count < 10 { throw XRDError.tooFewPoints(x.count) }
         if opt.subtractBackground { y = linearBaselineSubtract(x, y) }
 
@@ -160,7 +178,7 @@ public struct GraphitizationAnalyzer {
             graphitic: graphitic, turbostratic: turbostratic,
             areaFractionGraphitic: Xg, areaFractionTurbostratic: Xt,
             dPrimeWeighted: dPrime, crystalliteLc: Lc, fitR2: r2, dgPercent: DG,
-            pointsX: x, pointsY: y)
+            twoThetaOffset: offset, pointsX: x, pointsY: y)
     }
 
     private func makeEvaluator(y0: Double, graphitic: Peak, turbostratic: Peak?)

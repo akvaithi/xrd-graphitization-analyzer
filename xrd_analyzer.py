@@ -461,9 +461,26 @@ def _y0_pv(x, y0, A, xc, w, mu):
     return y0 + pseudo_voigt(x, A, xc, w, mu)
 
 
+def anchor_offset(two_theta, intensity, target_2theta: float,
+                  wavelength: float = DEFAULT_WAVELENGTH,
+                  window: tuple[float, float] = NETL_WINDOW) -> float:
+    """Constant 2θ offset that puts the measured graphitic (002) at ``target_2theta``.
+
+    Corrects a Bragg-Brentano specimen-displacement error: a quick single-peak fit
+    locates the measured (002) centre, and the offset is ``target − measured``.
+    Over the narrow (002) window the cosθ dependence of true displacement is ~flat,
+    so a constant shift is exact enough for DG. (Anchoring assumes the graphitic
+    phase is well ordered; an internal standard is the rigorous alternative.)
+    """
+    r = fit_netl(two_theta, intensity, peak_count=1,
+                 wavelength=wavelength, window=window)
+    return float(target_2theta) - r["graphitic"]["xc"]
+
+
 def fit_netl(two_theta, intensity, *, peak_count: int = 2,
              turbostratic_center: float | None = None, lock_turbostratic: bool = False,
              subtract_background: bool = False,
+             two_theta_offset: float = 0.0, anchor_002: float | None = None,
              wavelength: float = DEFAULT_WAVELENGTH,
              window: tuple[float, float] = NETL_WINDOW) -> dict:
     """
@@ -471,9 +488,17 @@ def fit_netl(two_theta, intensity, *, peak_count: int = 2,
     optional pure-Lorentzian turbostratic (μ=1). One or two peaks; the
     turbostratic centre may be supplied (the AI/human's choice). Returns DG% via
     area-weighted Maire-Mering. Identical method to the Swift core.
+
+    Specimen-displacement calibration (optional): pass ``anchor_002`` to shift the
+    whole pattern so the measured (002) lands at that 2θ (e.g. 26.54°), or a raw
+    ``two_theta_offset``. The applied shift is reported in ``two_theta_offset``.
     """
     tt = np.asarray(two_theta, float)
     inten = np.asarray(intensity, float)
+    if anchor_002 is not None:
+        two_theta_offset = anchor_offset(tt, inten, anchor_002, wavelength, window)
+    if two_theta_offset:
+        tt = tt + two_theta_offset
     mask = (tt >= window[0]) & (tt <= window[1])
     x, y = tt[mask], inten[mask]
     if len(x) < 10:
@@ -535,6 +560,7 @@ def fit_netl(two_theta, intensity, *, peak_count: int = 2,
     return {
         "method_name": "NETL faithful (free y0)" + ("" if At is None else " · 2-peak"),
         "wavelength_angstrom": round(wavelength, 6),
+        "two_theta_offset": round(float(two_theta_offset), 4),
         "y0": round(float(y0), 4),
         "peak_count": 1 if At is None else 2,
         "background_subtracted": bool(subtract_background),
