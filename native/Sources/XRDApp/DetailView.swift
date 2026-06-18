@@ -16,6 +16,7 @@ struct DetailView: View {
     @State private var result: DGResult?
     @State private var fitError: String?
     @State private var quality: ImpurityScan?
+    @State private var dgSpan: DGRange?
 
     // AI assist (local Ollama)
     @State private var ollamaHost = ProcessInfo.processInfo.environment["OLLAMA_HOST"] ?? "http://localhost:11434"
@@ -138,11 +139,17 @@ struct DetailView: View {
     private func dgCallout(_ r: DGResult) -> some View {
         VStack(spacing: 4) {
             Text("Degree of Graphitization").font(.caption).foregroundStyle(.secondary)
-            Text(String(format: "%.2f %%", r.dgPercent))
-                .font(.system(size: 40, weight: .semibold, design: .rounded))
+            Text(r.dgSigma != nil
+                 ? String(format: "%.2f ± %.2f %%", r.dgPercent, r.dgSigma!)
+                 : String(format: "%.2f %%", r.dgPercent))
+                .font(.system(size: 36, weight: .semibold, design: .rounded))
                 .foregroundStyle(.tint)
             Text("\(r.peakCount == 1 ? "single peak" : "area-weighted") · R² \(String(format: "%.4f", r.fitR2))")
                 .font(.caption2).foregroundStyle(.secondary)
+            if let s = dgSpan, s.high - s.low > 0.5 {
+                Text(String(format: "range %.1f–%.1f%% across deconvolution choices", s.low, s.high))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity).padding(.vertical, 16)
         .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
@@ -241,8 +248,12 @@ struct DetailView: View {
             calResult = cal
             if cal.significant { o.twoThetaOffset = -cal.offset }
         }
-        do { result = try GraphitizationAnalyzer(p).run(o); fitError = nil }
-        catch { result = nil; fitError = String(describing: error) }
+        do {
+            result = try GraphitizationAnalyzer(p).run(o); fitError = nil
+            var span = o; span.peakCount = 2     // range shares calibration/background context
+            dgSpan = dgRange(p, base: span)
+        }
+        catch { result = nil; fitError = String(describing: error); dgSpan = nil }
     }
 
     // MARK: AI assist (optional)

@@ -51,6 +51,7 @@ from xrd_analyzer import (
     XRDPattern,
     calibrate_internal_standard,
     dg_from_peaks,
+    dg_range,
     fit_netl,
     pseudo_voigt,
     scan_impurities,
@@ -850,9 +851,11 @@ async function runAISuggest(i){
 }
 function renderResultsNetl(d, title, sub, s, q){
   const pct=x=>(x*100).toFixed(2)+'%';
+  const sig = (d.DG_sigma!=null) ? ` ± ${d.DG_sigma.toFixed(2)}` : '';
+  const rng = d.dg_range ? `<div class="cap">range ${d.dg_range.low.toFixed(1)}–${d.dg_range.high.toFixed(1)}% across deconvolution choices</div>` : '';
   let h=fileHead(title,sub)+
     `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization</div>`+
-    `<div class="dg">${d.DG_percent.toFixed(2)} %</div><div class="cap">${d.method_name}</div></div>`+
+    `<div class="dg">${d.DG_percent.toFixed(2)}${sig} %</div><div class="cap">${d.method_name}</div>${rng}</div>`+
     qualityBanner(q)+
     `<div class="section">Graphitic peak</div>`+
     row('2θ centre',d.graphitic.xc.toFixed(4),'°')+row('FWHM',d.graphitic.w.toFixed(4),'°')+
@@ -1268,6 +1271,13 @@ class Handler(BaseHTTPRequestHandler):
                            anchor_002=float(anchor) if anchor not in (None, "") else None,
                            two_theta_offset=offset)
             res["plot_png"] = render_plot_netl(pattern, res, payload.get("theme", "dark"))
+            try:
+                res["dg_range"] = dg_range(pattern.two_theta, pattern.intensity,
+                                           subtract_background=bool(payload.get("subtract_background")),
+                                           anchor_002=float(anchor) if anchor not in (None, "") else None,
+                                           two_theta_offset=offset)
+            except Exception:  # noqa: BLE001
+                pass
             out["result"] = res
         except (FitError, ValueError) as exc:
             out["error"] = str(exc)
@@ -1313,6 +1323,12 @@ class Handler(BaseHTTPRequestHandler):
                                subtract_background=bool(dec.get("subtract_background")),
                                anchor_002=anchor, two_theta_offset=offset if anchor is None else 0.0)
                 res["plot_png"] = render_plot_netl(pattern, res, payload.get("theme", "dark"))
+                try:
+                    res["dg_range"] = dg_range(pattern.two_theta, pattern.intensity,
+                                               subtract_background=bool(dec.get("subtract_background")),
+                                               anchor_002=anchor, two_theta_offset=offset if anchor is None else 0.0)
+                except Exception:  # noqa: BLE001
+                    pass
                 out["result"] = res
             except (FitError, ValueError) as exc:
                 out["error"] = str(exc)

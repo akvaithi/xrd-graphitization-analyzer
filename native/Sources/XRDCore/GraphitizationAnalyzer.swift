@@ -49,6 +49,7 @@ public struct DGResult: Sendable {
     public let crystalliteLc: Double
     public let fitR2: Double
     public let dgPercent: Double
+    public let dgSigma: Double?                  // statistical (fit-covariance) 1σ; nil if ill-posed
     public let twoThetaOffset: Double            // applied specimen-displacement shift
     public let pointsX: [Double]                 // fitted window (raw, or bg-subtracted)
     public let pointsY: [Double]
@@ -98,6 +99,8 @@ public struct GraphitizationAnalyzer {
 
         let graphitic: Peak, turbostratic: Peak?
         let y0: Double, params: [Double]
+        let paramModel: (Double, [Double]) -> Double      // raw model(x, params) for σ
+        let dgFromParams: ([Double]) -> Double             // DG(params) for σ propagation
 
         if opt.peakCount <= 1 {
             // y0 + single Pseudo-Voigt
@@ -109,7 +112,8 @@ public struct GraphitizationAnalyzer {
             y0 = p[0]
             graphitic = Peak(A: p[1], xc: p[2], w: p[3], mu: p[4], dSpacing: bragg(p[2]))
             turbostratic = nil
-            params = p
+            params = p; paramModel = model
+            dgFromParams = { [self] q in maireMering(bragg(q[2])) }
         } else if opt.lockTurbostratic, let T = opt.turbostraticCenter {
             // y0 + graphitic (free μ) + turbostratic at fixed centre T (μ = 1)
             let model: (Double, [Double]) -> Double = { xx, p in
@@ -122,7 +126,8 @@ public struct GraphitizationAnalyzer {
             y0 = p[0]
             graphitic = Peak(A: p[1], xc: p[2], w: p[3], mu: p[4], dSpacing: bragg(p[2]))
             turbostratic = Peak(A: p[5], xc: T, w: p[6], mu: 1.0, dSpacing: bragg(T))
-            params = p
+            params = p; paramModel = model
+            dgFromParams = { [self] q in dgTwo(q[1], q[2], q[5], T) }
         } else {
             // y0 + graphitic (free μ) + turbostratic (free centre, μ = 1)
             let tSeed = opt.turbostraticCenter ?? 26.2
@@ -139,7 +144,8 @@ public struct GraphitizationAnalyzer {
             let pkB = Peak(A: p[5], xc: p[6], w: p[7], mu: 1.0, dSpacing: bragg(p[6]))
             if pkA.xc >= pkB.xc { graphitic = pkA; turbostratic = pkB }
             else { graphitic = pkB; turbostratic = pkA }
-            params = p
+            params = p; paramModel = model
+            dgFromParams = { [self] q in dgTwo(q[1], q[2], q[5], q[6]) }
         }
 
         // R² over the fitted window
@@ -166,6 +172,8 @@ public struct GraphitizationAnalyzer {
         }
         let DG = maireMering(dPrime)
         let Lc = scherrerLc(graphitic.xc, graphitic.w)
+        let sigma = dgSigma(paramModel: paramModel, params: params, x: x, y: y,
+                            ssRes: ssRes, dgFromParams: dgFromParams)
 
         let name = opt.peakCount <= 1
             ? "NETL single-peak (PsdVoigt1 + y0)"
@@ -178,7 +186,59 @@ public struct GraphitizationAnalyzer {
             graphitic: graphitic, turbostratic: turbostratic,
             areaFractionGraphitic: Xg, areaFractionTurbostratic: Xt,
             dPrimeWeighted: dPrime, crystalliteLc: Lc, fitR2: r2, dgPercent: DG,
-            twoThetaOffset: offset, pointsX: x, pointsY: y)
+            dgSigma: sigma, twoThetaOffset: offset, pointsX: x, pointsY: y)
+    }
+
+    /// graphitic = higher-2θ; area-weighted d′ → Maire-Mering DG (for σ propagation).
+    private func dgTwo(_ Ag: Double, _ xcg: Double, _ At: Double, _ xct: Double) -> Double {
+        var (ag, g, at, t) = (Ag, xcg, At, xct)
+        if t > g { swap(&g, &t); swap(&ag, &at) }
+        let total = ag + at
+        let Xg = total > 0 ? ag / total : 1.0
+        return maireMering(Xg * bragg(g) + (1 - Xg) * bragg(t))
+    }
+
+    /// Statistical DG 1σ: covariance = s²·(JᵀJ)⁻¹ (finite-difference J), then
+    /// linear propagation σ_DG = √(gᵀ·cov·g). Returns nil if ill-posed.
+    private func dgSigma(paramModel: (Double, [Double]) -> Double, params: [Double],
+                         x: [Double], y: [Double], ssRes: Double,
+                         dgFromParams: ([Double]) -> Double) -> Double? {
+        let m = x.count, n = params.count
+        guard m > n else { return nil }
+        // finite-difference Jacobian J[i][j] = ∂model(x_i)/∂p_j
+        var step = [Double](repeating: 0, count: n)
+        for j in 0..<n { step[j] = max(1e-6, abs(params[j]) * 1e-4) }
+        var J = [[Double]](repeating: [Double](repeating: 0, count: n), count: m)
+        for j in 0..<n {
+            var pp = params, pm = params
+            pp[j] += step[j]; pm[j] -= step[j]
+            for i in 0..<m { J[i][j] = (paramModel(x[i], pp) - paramModel(x[i], pm)) / (2 * step[j]) }
+        }
+        // JᵀJ
+        var JtJ = [[Double]](repeating: [Double](repeating: 0, count: n), count: n)
+        for a in 0..<n { for b in 0..<n {
+            var s = 0.0; for i in 0..<m { s += J[i][a] * J[i][b] }; JtJ[a][b] = s
+        }}
+        // invert column-by-column via solveLinear; scale by residual variance
+        let s2 = ssRes / Double(m - n)
+        var cov = [[Double]](repeating: [Double](repeating: 0, count: n), count: n)
+        for col in 0..<n {
+            var e = [Double](repeating: 0, count: n); e[col] = 1
+            guard let c = solveLinear(JtJ, e) else { return nil }
+            for r in 0..<n { cov[r][col] = c[r] * s2 }
+        }
+        // gradient g_j = ∂DG/∂p_j, then σ² = gᵀ cov g
+        var g = [Double](repeating: 0, count: n)
+        for j in 0..<n {
+            var pp = params, pm = params
+            pp[j] += step[j]; pm[j] -= step[j]
+            g[j] = (dgFromParams(pp) - dgFromParams(pm)) / (2 * step[j])
+        }
+        var v = 0.0
+        for a in 0..<n { for b in 0..<n { v += g[a] * cov[a][b] * g[b] } }
+        guard v.isFinite, v >= 0 else { return nil }
+        let sd = v.squareRoot()
+        return sd.isFinite ? (sd * 100).rounded() / 100 : nil
     }
 
     private func makeEvaluator(y0: Double, graphitic: Peak, turbostratic: Peak?)
@@ -198,4 +258,33 @@ public struct GraphitizationAnalyzer {
         let slope = xr != xl ? (yr - yl) / (xr - xl) : 0.0
         return x.indices.map { max(y[$0] - (yl + slope * (x[$0] - xl)), 0.0) }
     }
+}
+
+/// DG across the defensible deconvolution choices → primary + [low, high]. The
+/// dominant DG uncertainty is the deconvolution choice (1 vs 2 peaks, turbostratic
+/// placement), not the fit covariance. Mirrors `xrd_analyzer.dg_range`.
+public struct DGRange: Sendable {
+    public let primary: Double
+    public let low: Double
+    public let high: Double
+    public let byMethod: [(name: String, dg: Double)]
+}
+
+public func dgRange(_ pattern: XRDPattern, turbostraticLow: Double = 26.10,
+                    base: FitOptions = FitOptions()) -> DGRange? {
+    var methods: [(String, Double)] = []
+    func tryFit(_ name: String, _ mutate: (inout FitOptions) -> Void) {
+        var o = base; mutate(&o)
+        if let r = try? GraphitizationAnalyzer(pattern, wavelength: DEFAULT_WAVELENGTH).run(o) {
+            methods.append((name, (r.dgPercent * 100).rounded() / 100))
+        }
+    }
+    tryFit("2-peak") { $0.peakCount = 2; $0.lockTurbostratic = false; $0.turbostraticCenter = nil }
+    tryFit("1-peak") { $0.peakCount = 1 }
+    tryFit("2-peak low turbostratic") { $0.peakCount = 2; $0.lockTurbostratic = true; $0.turbostraticCenter = turbostraticLow }
+    if methods.isEmpty { return nil }
+    let vals = methods.map { $0.1 }
+    let primary = methods.first { $0.0 == "2-peak" }?.1 ?? vals[0]
+    return DGRange(primary: primary, low: vals.min()!, high: vals.max()!,
+                   byMethod: methods.map { (name: $0.0, dg: $0.1) })
 }

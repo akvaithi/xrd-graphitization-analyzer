@@ -197,16 +197,21 @@ class GraphitizationAnalyzer:
     @staticmethod
     def _fit(model, x, y, p0, bounds, label):
         """Run curve_fit, converting OptimizeWarning/failures into FitError."""
+        return GraphitizationAnalyzer._fit_cov(model, x, y, p0, bounds, label)[0]
+
+    @staticmethod
+    def _fit_cov(model, x, y, p0, bounds, label):
+        """Like ``_fit`` but also returns the parameter covariance (for DG σ)."""
         with warnings.catch_warnings():
             warnings.simplefilter("error", OptimizeWarning)
             try:
-                popt, _ = curve_fit(model, x, y, p0=p0, bounds=bounds, maxfev=20000)
+                popt, pcov = curve_fit(model, x, y, p0=p0, bounds=bounds, maxfev=20000)
             except (OptimizeWarning, RuntimeError, ValueError) as exc:
                 raise FitError(
                     f"{label}: fit did not converge "
                     f"(possible high amorphous content) — {exc}"
                 )
-        return popt
+        return popt, pcov
 
     @staticmethod
     def _r2(y, yfit):
@@ -501,8 +506,13 @@ def _phase_lines(phase: str, wavelength: float, lo: float = 32.0, hi: float = 90
     return dedup
 
 
+# Half-width (deg) of the intensity-weighted centroid window. Defined in 2θ
+# (not index count) so Python and Swift select identical points → identical centre.
+_CENTROID_HALF_DEG = 0.12
+
+
 def _local_peaks(x, y, lo, hi, min_prom_frac=0.02):
-    """Local-prominence peaks (parabolic-refined centre) in [lo, hi]."""
+    """Local-prominence peaks with an intensity-weighted centre in [lo, hi]."""
     o = np.argsort(x); x, y = x[o], y[o]
     half = 40
     pad = np.pad(y, half, mode="edge")
@@ -514,9 +524,9 @@ def _local_peaks(x, y, lo, hi, min_prom_frac=0.02):
         if not (lo <= x[i] <= hi):
             continue
         if y[i] == y[i - 6:i + 7].max() and prom[i] > min_prom_frac * ymax:
-            xs, ys = x[i - 3:i + 4], y[i - 3:i + 4]
-            c = np.polyfit(xs, ys, 2)
-            cen = -c[1] / (2 * c[0]) if c[0] < 0 else x[i]
+            sel = (x >= x[i] - _CENTROID_HALF_DEG) & (x <= x[i] + _CENTROID_HALF_DEG)
+            wts = np.clip(y[sel] - rollmin[sel], 0.0, None)
+            cen = float((x[sel] * wts).sum() / wts.sum()) if wts.sum() > 0 else float(x[i])
             if not out or cen - out[-1][0] > 0.4:
                 out.append([float(cen), float(prom[i])])
     return out
@@ -572,6 +582,45 @@ def calibrate_internal_standard(two_theta, intensity, phase: str = "auto", *,
         return {"phase": None, "phase_label": None, "offset": 0.0, "spread": None,
                 "n_lines": 0, "matches": [], "reliable": False, "significant": False}
     return best
+
+
+def _bragg_d(tt_deg, wavelength):
+    return wavelength / (2.0 * np.sin(np.deg2rad(tt_deg / 2.0)))
+
+
+def _dg_single(xcg, wavelength):
+    return (D_TURBOSTRATIC - _bragg_d(xcg, wavelength)) / (D_TURBOSTRATIC - D_GRAPHITE) * 100.0
+
+
+def _dg_two(Ag, xcg, At, xct, wavelength):
+    if xct > xcg:                       # graphitic = higher 2θ
+        xcg, xct, Ag, At = xct, xcg, At, Ag
+    total = Ag + At
+    Xg = Ag / total if total > 0 else 1.0
+    dprime = Xg * _bragg_d(xcg, wavelength) + (1 - Xg) * _bragg_d(xct, wavelength)
+    return (D_TURBOSTRATIC - dprime) / (D_TURBOSTRATIC - D_GRAPHITE) * 100.0
+
+
+def _mc_dg_sigma(popt, pcov, dg_fn, n=400):
+    """Monte-Carlo DG std from the fit parameter covariance (None if ill-posed)."""
+    if pcov is None:
+        return None
+    pcov = np.asarray(pcov, float)
+    if pcov.shape != (len(popt), len(popt)) or not np.all(np.isfinite(pcov)):
+        return None
+    try:
+        samples = np.random.default_rng(12345).multivariate_normal(popt, pcov, n)
+    except Exception:  # noqa: BLE001 — singular / non-PSD covariance
+        return None
+    vals = []
+    for s in samples:
+        try:
+            v = dg_fn(s)
+            if np.isfinite(v) and -50.0 < v < 150.0:
+                vals.append(v)
+        except Exception:  # noqa: BLE001
+            pass
+    return round(float(np.std(vals)), 2) if len(vals) >= 20 else None
 
 
 def _y0_pv(x, y0, A, xc, w, mu):
@@ -635,17 +684,19 @@ def fit_netl(two_theta, intensity, *, peak_count: int = 2,
     if peak_count <= 1:
         p0 = [ymin, ph * 0.9, 26.55, 0.2, 0.5]
         lo = [-np.inf, 0, 26.3, 0.02, 0]; hi = [np.inf, np.inf, 26.8, 3, 1]
-        popt = GraphitizationAnalyzer._fit(_y0_pv, x, y, p0, (lo, hi), "AI single-peak")
+        popt, pcov = GraphitizationAnalyzer._fit_cov(_y0_pv, x, y, p0, (lo, hi), "AI single-peak")
         y0, Ag, xcg, wg, mug = popt
         At = xct = wt = None
+        dg_fn = lambda p: _dg_single(p[2], wavelength)
     elif lock_turbostratic and turbostratic_center is not None:
         T = float(turbostratic_center)
         model = lambda x, y0, Ag, xcg, wg, mug, At, wt: \
             y0 + pseudo_voigt(x, Ag, xcg, wg, mug) + pseudo_voigt(x, At, T, wt, 1.0)
         p0 = [ymin, ph * 0.6, 26.55, 0.15, 0.5, ph * 0.3, 0.5]
         lo = [-np.inf, 0, 26.3, 0.02, 0, 0, 0.05]; hi = [np.inf, np.inf, 26.8, 3, 1, np.inf, 3]
-        popt = GraphitizationAnalyzer._fit(model, x, y, p0, (lo, hi), "AI two-peak (locked)")
+        popt, pcov = GraphitizationAnalyzer._fit_cov(model, x, y, p0, (lo, hi), "AI two-peak (locked)")
         y0, Ag, xcg, wg, mug, At, wt = popt; xct = T
+        dg_fn = lambda p: _dg_two(p[1], p[2], p[5], T, wavelength)
     else:
         tseed = float(turbostratic_center) if turbostratic_center is not None else 26.2
         model = lambda x, y0, Ag, xcg, wg, mug, At, xct, wt: \
@@ -653,8 +704,11 @@ def fit_netl(two_theta, intensity, *, peak_count: int = 2,
         p0 = [ymin, ph * 0.6, 26.55, 0.15, 0.5, ph * 0.3, tseed, 0.6]
         lo = [-np.inf, 0, 26.3, 0.02, 0, 0, 25.1, 0.05]
         hi = [np.inf, np.inf, 26.8, 3, 1, np.inf, 26.45, 3]
-        popt = GraphitizationAnalyzer._fit(model, x, y, p0, (lo, hi), "AI two-peak")
+        popt, pcov = GraphitizationAnalyzer._fit_cov(model, x, y, p0, (lo, hi), "AI two-peak")
         y0, Ag, xcg, wg, mug, At, xct, wt = popt
+        dg_fn = lambda p: _dg_two(p[1], p[2], p[5], p[6], wavelength)
+
+    dg_sigma = _mc_dg_sigma(popt, pcov, dg_fn)
 
     dg = bragg(xcg)
     if At is None:
@@ -690,9 +744,41 @@ def fit_netl(two_theta, intensity, *, peak_count: int = 2,
         "d_spacing_weighted_angstrom": round(float(d_prime), 6),
         "crystallite_height_Lc_angstrom": round(float(Lc), 2),
         "DG_percent": round(float(DG), 2),
+        "DG_sigma": dg_sigma,   # statistical (fit-covariance) 1σ; None if ill-posed
         "points_x": [round(float(v), 4) for v in x],
         "points_y": [round(float(v), 4) for v in y],
     }
+
+
+def dg_range(two_theta, intensity, *, turbostratic_low: float = 26.10,
+             subtract_background: bool = False, anchor_002: float | None = None,
+             two_theta_offset: float = 0.0, wavelength: float = DEFAULT_WAVELENGTH,
+             window: tuple[float, float] = NETL_WINDOW) -> dict | None:
+    """DG across the defensible deconvolution choices → primary + [low, high].
+
+    The dominant DG uncertainty is the *deconvolution choice* (1 vs 2 peaks, where
+    the turbostratic peak sits), not the fit covariance. This runs the three
+    defensible setups — 2-peak free (primary), 1-peak, and 2-peak with a broad
+    low turbostratic — and reports the spread, so the non-uniqueness is explicit.
+    """
+    kw = dict(subtract_background=subtract_background, anchor_002=anchor_002,
+              two_theta_offset=two_theta_offset, wavelength=wavelength, window=window)
+    methods: dict[str, float] = {}
+    for name, extra in (("2-peak", dict(peak_count=2)),
+                        ("1-peak", dict(peak_count=1)),
+                        ("2-peak low turbostratic",
+                         dict(peak_count=2, turbostratic_center=turbostratic_low,
+                              lock_turbostratic=True))):
+        try:
+            methods[name] = round(fit_netl(two_theta, intensity, **extra, **kw)["DG_percent"], 2)
+        except (FitError, ValueError):
+            pass
+    if not methods:
+        return None
+    vals = list(methods.values())
+    return {"primary": methods.get("2-peak", vals[0]),
+            "low": round(min(vals), 2), "high": round(max(vals), 2),
+            "by_method": methods}
 
 
 # ---------------------------------------------------------------------------

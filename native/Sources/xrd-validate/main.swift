@@ -61,7 +61,8 @@ do {
     let pattern = try XRDPattern.parse(contentsOf: URL(fileURLWithPath: path ?? args[1]))
     if let ph = calibPhase {
         let c = InternalStandard.calibrate(pattern, phase: ph)
-        print("{\"phase\":\"\(c.phase ?? "none")\",\"offset\":\(c.offset),\"spread\":\(c.spread ?? -1),\"n_lines\":\(c.nLines),\"reliable\":\(c.reliable),\"significant\":\(c.significant)}")
+        let ms = c.matches.map { String(format: "%.3f→%.3f(%+.3f)", $0.line, $0.observed, $0.delta) }.joined(separator: " ")
+        print("{\"phase\":\"\(c.phase ?? "none")\",\"offset\":\(c.offset),\"spread\":\(c.spread ?? -1),\"n_lines\":\(c.nLines),\"reliable\":\(c.reliable),\"significant\":\(c.significant),\"matches\":\"\(ms)\"}")
         if c.significant { opt.twoThetaOffset = -c.offset }
     }
     let r = try GraphitizationAnalyzer(pattern).run(opt)
@@ -75,7 +76,11 @@ do {
         "d_prime": r.dPrimeWeighted,
         "Lc": r.crystalliteLc,
         "r2": r.fitR2,
+        "DG_sigma": r.dgSigma ?? -1,
     ]
+    if let rng = dgRange(pattern, base: opt) {
+        dict["dg_range_low"] = rng.low; dict["dg_range_high"] = rng.high
+    }
     if let t = r.turbostratic {
         dict["turbostratic_xc"] = t.xc
         dict["turbostratic_w"] = t.w

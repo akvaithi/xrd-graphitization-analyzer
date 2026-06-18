@@ -44,21 +44,28 @@ public struct InternalStandard: Sendable {
         return dd
     }
 
+    // Half-width (deg) of the intensity-weighted centroid window — matches Python.
+    private static let centroidHalfDeg = 0.12
+
     private static func localPeaks(_ p: XRDPattern, _ lo: Double, _ hi: Double,
                                    _ promFrac: Double = 0.02) -> [(Double, Double)] {
         let order = p.twoTheta.indices.sorted { p.twoTheta[$0] < p.twoTheta[$1] }
         let x = order.map { p.twoTheta[$0] }, y = order.map { p.intensity[$0] }
         let n = x.count, half = 40
         if n < 80 { return [] }
+        var rollmin = [Double](repeating: 0, count: n)
+        for i in 0..<n { let a = max(0, i - half), b = min(n - 1, i + half); rollmin[i] = y[a...b].min() ?? y[i] }
         let ymax = y.max() ?? 1
         var out: [(Double, Double)] = []
         for i in 6..<(n - 6) {
             guard x[i] >= lo && x[i] <= hi else { continue }
-            let a = max(0, i - half), b = min(n - 1, i + half)
-            let prom = y[i] - (y[a...b].min() ?? y[i])
+            let prom = y[i] - rollmin[i]
             if y[i] == y[(i-6)...(i+6)].max()! && prom > promFrac * ymax {
-                let xs = Array(x[(i-3)...(i+3)]), ys = Array(y[(i-3)...(i+3)])
-                let cen = vertex(xs, ys) ?? x[i]
+                var num = 0.0, den = 0.0
+                for j in 0..<n where x[j] >= x[i] - centroidHalfDeg && x[j] <= x[i] + centroidHalfDeg {
+                    let w = max(y[j] - rollmin[j], 0.0); num += x[j] * w; den += w
+                }
+                let cen = den > 0 ? num / den : x[i]
                 if out.isEmpty || cen - out.last!.0 > 0.4 { out.append((cen, prom)) }
             }
         }
@@ -108,32 +115,5 @@ public struct InternalStandard: Sendable {
         guard a.count > 1 else { return 0 }
         let mu = a.reduce(0, +) / Double(a.count)
         return (a.reduce(0) { $0 + ($1 - mu) * ($1 - mu) } / Double(a.count)).squareRoot()
-    }
-    private static func vertex(_ x: [Double], _ y: [Double]) -> Double? {
-        guard x.count >= 3 else { return nil }
-        let n = Double(x.count)
-        let sx = x.reduce(0,+), sx2 = x.reduce(0){$0+$1*$1}, sx3 = x.reduce(0){$0+$1*$1*$1}
-        let sx4 = x.reduce(0){$0+$1*$1*$1*$1}
-        let sy = y.reduce(0,+), sxy = zip(x,y).reduce(0){$0+$1.0*$1.1}, sx2y = zip(x,y).reduce(0){$0+$1.0*$1.0*$1.1}
-        // solve 3x3 normal equations for ax²+bx+c
-        let m: [[Double]] = [[sx4,sx3,sx2],[sx3,sx2,sx],[sx2,sx,n]]
-        let v = [sx2y, sxy, sy]
-        guard let sol = solve3(m, v), sol[0] < 0 else { return nil }
-        return -sol[1] / (2 * sol[0])
-    }
-    private static func solve3(_ m: [[Double]], _ v: [Double]) -> [Double]? {
-        let d = det3(m); if abs(d) < 1e-12 { return nil }
-        var out = [Double](repeating: 0, count: 3)
-        for i in 0..<3 {
-            var mi = m
-            for r in 0..<3 { mi[r][i] = v[r] }
-            out[i] = det3(mi) / d
-        }
-        return out
-    }
-    private static func det3(_ m: [[Double]]) -> Double {
-        m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])
-        - m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])
-        + m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0])
     }
 }
