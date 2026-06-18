@@ -78,6 +78,23 @@ when a reliable internal standard is present the 2θ is calibrated before the mo
 sees the features, so it no longer has to guess displacement. Mirrored in web +
 desktop; the offset is reported either way. DG is computed locally throughout.
 
+**DG uncertainty + range.** Every fit reports a statistical 1σ from the fit
+covariance (`DG_sigma`), and — more importantly — a **range across the defensible
+deconvolution choices** (2-peak free, 1-peak, 2-peak low-turbostratic) via
+`dg_range()`. Since the dominant DG uncertainty is the deconvolution *choice*, not
+the fit, this makes the non-uniqueness explicit: on the two postdoc samples where
+least-squares and the expert disagree, the reported range *brackets* the gold
+value. Shown as "DG ± σ (range a–b%)" in both apps.
+
+**Per-sample report.** The web app exports a one-page **PDF** (fit plot +
+parameters + QC + calibration + DG ± σ + range); the desktop app exports the same
+as **CSV**.
+
+**Tests.** `python3 -m pytest tests/` — synthetic math + uncertainty/range checks
+run anywhere; gold-data MAE (≤ 1.1% vs the postdoc fits), calibration-silence on
+aligned samples, and Python↔Swift engine parity run locally and skip cleanly in CI
+when the data/Swift binary aren't present. CI runs the synthetic suite on every push.
+
 Validated against the NETL/postdoc OriginLab fits: mean abs error ≈ 1.3 DG% across
 the GPC/CPC sample set. X-ray wavelength is fixed to Cu Kα **λ = 1.54187 Å**.
 `OptimizeWarning` / fit failures are caught and reported cleanly.

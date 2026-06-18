@@ -284,6 +284,9 @@ struct DetailView: View {
                     Button { runAI() } label: { Label("Suggest deconvolution", systemImage: "wand.and.stars") }
                         .disabled(aiBusy || file.pattern == nil || effectiveHost == nil)
                     if aiBusy { ProgressView().controlSize(.small) }
+                    Spacer()
+                    Button { saveReport() } label: { Label("Report (CSV)", systemImage: "square.and.arrow.down") }
+                        .disabled(result == nil)
                 }
                 if let note = aiNote {
                     Text(note).font(.caption)
@@ -349,6 +352,46 @@ struct DetailView: View {
                 await MainActor.run { aiNote = "AI error: \(error)"; aiBusy = false }
             }
         }
+    }
+
+    private func saveReport() {
+        guard let r = result else { return }
+        var rows: [(String, String)] = [
+            ("sample", file.displayName), ("file", file.url.lastPathComponent),
+            ("method", r.methodName), ("wavelength_angstrom", String(format: "%.5f", r.wavelength)),
+            ("DG_percent", String(format: "%.2f", r.dgPercent)),
+            ("DG_sigma", r.dgSigma.map { String(format: "%.2f", $0) } ?? ""),
+        ]
+        if let s = dgSpan { rows += [("DG_range_low", String(format: "%.2f", s.low)),
+                                     ("DG_range_high", String(format: "%.2f", s.high))] }
+        rows += [
+            ("peak_count", "\(r.peakCount)"),
+            ("graphitic_2theta", String(format: "%.4f", r.graphitic.xc)),
+            ("graphitic_FWHM", String(format: "%.4f", r.graphitic.w)),
+            ("graphitic_mu", String(format: "%.4f", r.graphitic.mu)),
+            ("graphitic_d_nm", String(format: "%.5f", r.graphitic.dSpacing)),
+        ]
+        if let t = r.turbostratic {
+            rows += [("turbostratic_2theta", String(format: "%.4f", t.xc)),
+                     ("turbostratic_FWHM", String(format: "%.4f", t.w)),
+                     ("turbostratic_d_nm", String(format: "%.5f", t.dSpacing))]
+        }
+        rows += [
+            ("X_graphitic", String(format: "%.4f", r.areaFractionGraphitic)),
+            ("X_turbostratic", String(format: "%.4f", r.areaFractionTurbostratic)),
+            ("d_prime_nm", String(format: "%.5f", r.dPrimeWeighted)),
+            ("crystallite_Lc_A", String(format: "%.1f", r.crystalliteLc)),
+            ("baseline_y0", String(format: "%.3f", r.y0)),
+            ("two_theta_offset", String(format: "%+.3f", r.twoThetaOffset)),
+            ("fit_R2", String(format: "%.5f", r.fitR2)),
+        ]
+        if let q = quality { rows.append(("data_quality", q.verdict)) }
+        let csv = "key,value\n" + rows.map { "\($0.0),\"\($0.1)\"" }.joined(separator: "\n") + "\n"
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = file.displayName.replacingOccurrences(of: " ", with: "_") + "_DG_report.csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        guard panel.runModal() == NSApplication.ModalResponse.OK, let url = panel.url else { return }
+        try? csv.write(to: url, atomically: true, encoding: .utf8)
     }
 
     private func deg(_ v: Double) -> String { String(format: "%.4f°", v) }

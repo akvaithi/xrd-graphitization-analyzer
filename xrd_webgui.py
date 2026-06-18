@@ -188,6 +188,81 @@ def render_plot_netl(pattern: XRDPattern, res: dict, theme: str = "dark") -> str
     return "data:image/png;base64," + base64.b64encode(buf.read()).decode("ascii")
 
 
+def render_report_pdf(res: dict, *, sample: str, sub: str = "",
+                      quality: dict | None = None, calibration: dict | None = None) -> bytes:
+    """One-page PDF report: fit plot + parameters + QC + calibration + DG ± σ."""
+    import datetime
+    pal = _plot_theme("light")
+    fig = Figure(figsize=(8.5, 11), dpi=200, facecolor="white")
+
+    # --- header ---
+    fig.text(0.06, 0.965, sample, fontsize=15, weight="bold")
+    meta = f"{sub}    ·    {res.get('method_name','')}    ·    λ = {res.get('wavelength_angstrom','?')} Å"
+    fig.text(0.06, 0.945, meta, fontsize=8.5, color="#555")
+    fig.text(0.06, 0.930, "Generated " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+             + "  ·  XRD Graphitization Analyzer", fontsize=7.5, color="#999")
+
+    # --- DG headline ---
+    sig = f" ± {res['DG_sigma']:.2f}" if res.get("DG_sigma") is not None else ""
+    fig.text(0.06, 0.885, f"Degree of Graphitization:  {res['DG_percent']:.2f}{sig} %",
+             fontsize=14, weight="bold", color="#0a6")
+    rng = res.get("dg_range")
+    if rng:
+        fig.text(0.06, 0.865, f"Range {rng['low']:.1f}–{rng['high']:.1f}% across deconvolution "
+                 f"choices ({', '.join(f'{k} {v:.1f}' for k,v in rng['by_method'].items())})",
+                 fontsize=8.5, color="#555")
+
+    # --- fit plot ---
+    ax = fig.add_axes([0.09, 0.50, 0.85, 0.33])
+    x = np.asarray(res["points_x"], float); y = np.asarray(res["points_y"], float)
+    y0 = float(res.get("y0", 0.0)); g, t = res["graphitic"], res.get("turbostratic")
+    xp = np.linspace(x.min(), x.max(), 1200)
+    yg = y0 + pseudo_voigt(xp, g["A"], g["xc"], g["w"], g["mu"])
+    ax.scatter(x, y, s=14, facecolors="none", edgecolors="#444", linewidths=0.8, label="Raw")
+    ax.plot(xp, yg, color=RED_PEAK, lw=1.6, label=f"Graphitic {g['xc']:.3f}°")
+    ytot = yg
+    if t is not None:
+        yt = y0 + pseudo_voigt(xp, t["A"], t["xc"], t["w"], 1.0); ytot = yg + yt - y0
+        ax.plot(xp, yt, color=BLUE_PEAK, lw=1.6, label=f"Turbostratic {t['xc']:.3f}°")
+    ax.plot(xp, ytot, color="#111", lw=1.8, ls="--", label="Total fit")
+    ax.set_xlabel("2θ (degrees)", fontsize=9); ax.set_ylabel("Intensity (a.u.)", fontsize=9)
+    ax.grid(True, color="#ddd", lw=0.5); ax.legend(fontsize=8); ax.tick_params(labelsize=8)
+
+    # --- parameter block ---
+    lines = ["DECONVOLUTION",
+             f"  Graphitic   2θ={g['xc']:.4f}°  FWHM={g['w']:.4f}°  μ={g['mu']:.3f}  "
+             f"A={g['A']:.2f}  d={g['d_spacing_angstrom']:.5f} nm"]
+    if t is not None:
+        lines.append(f"  Turbostratic 2θ={t['xc']:.4f}°  FWHM={t['w']:.4f}°  (Lorentzian)  "
+                     f"A={t['A']:.2f}  d={t['d_spacing_angstrom']:.5f} nm")
+    lines += [
+        f"  X_g / X_t = {res['area_fraction_graphitic']*100:.1f}% / {res['area_fraction_turbostratic']*100:.1f}%"
+        f"    d′ = {res['d_spacing_weighted_angstrom']:.5f} nm",
+        f"  Crystallite Lc = {res['crystallite_height_Lc_angstrom']:.1f} Å (apparent)    "
+        f"baseline y0 = {res['y0']:.3f}",
+    ]
+    if res.get("two_theta_offset"):
+        lines.append(f"  2θ displacement correction applied: {res['two_theta_offset']:+.3f}°")
+    if calibration and calibration.get("phase"):
+        c = calibration
+        lines += ["", "CALIBRATION (internal standard)",
+                  f"  {c['phase']} · offset {c['offset']:+.3f}° · {c['n_lines']} lines · spread ±{c['spread']}"
+                  f" · {'applied' if c['significant'] else 'within noise, not applied'}"]
+    if quality and quality.get("verdict"):
+        lines += ["", "DATA QUALITY", f"  {quality['verdict']}"]
+        for im in quality.get("impurities", [])[:6]:
+            lines.append(f"    {im['two_theta']}°  {im['phase']}  {im['rel_pct']}% of (002)  [{im['level']}]")
+    fig.text(0.06, 0.44, "\n".join(lines), fontsize=8.5, family="monospace",
+             va="top", linespacing=1.5)
+    fig.text(0.06, 0.04, "DG = (0.3440 − d′)/(0.3440 − 0.3354) × 100  (Maire–Mering).  "
+             "AI/human chooses the deconvolution setup; DG computed deterministically.",
+             fontsize=7, color="#999", wrap=True)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="pdf", facecolor="white")
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Compare — parse run parameters, analyse, build dataset & comparison chart
 # ---------------------------------------------------------------------------
@@ -639,6 +714,7 @@ PAGE_HTML = """<!DOCTYPE html>
   </div>
   <div class="ctrls" id="aiBar" style="display:none">
     <button id="aiBtn" class="mini">✨ Suggest deconvolution (Claude)</button>
+    <button id="reportBtn" class="mini">⤓ Report (PDF)</button>
     <span id="aiNote" class="muted"></span>
   </div>
   <div class="ctrls" id="manualBar" style="display:none">
@@ -920,6 +996,21 @@ async function reFit(){
   mOffset.textContent = t;
 }
 mCalStd.onchange=reFit;
+$('reportBtn').addEventListener('click',async()=>{
+  const i=curFit; if(i<0||i>=files.length) return;
+  const r=rows[i]||{}; setStatus('Building report…');
+  try{
+    const resp=await fetch('/report',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({xy:files[i].text, sample:(r.label||files[i].name), file:files[i].name, ...manualParams()})});
+    const d=await resp.json();
+    if(!resp.ok||!d.pdf){ setStatus('Report failed: '+(d.error||resp.statusText),true); return; }
+    const a=document.createElement('a');
+    a.href='data:application/pdf;base64,'+d.pdf;
+    a.download=((r.label||files[i].name).replace(/[^\w.-]+/g,'_'))+'_DG_report.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    setStatus('Report downloaded.');
+  }catch(err){ setStatus('Report failed: '+err,true); }
+});
 mPeaks.onchange=()=>{ mTurboLock.disabled=mPeaks.value!=='2'; if(mPeaks.value!=='2'){mTurboLock.checked=false;mTurbo.disabled=true;} reFit(); };
 mTurboLock.onchange=()=>{ mTurbo.disabled=!mTurboLock.checked; reFit(); };
 mTurbo.onchange=()=>{ if(mTurboLock.checked) reFit(); };
@@ -1182,7 +1273,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self.path.split("?")[0].rstrip("/")
-        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks", "/ai_suggest", "/fit")):
+        if path.endswith(("/analyze", "/batch_analyze", "/chart", "/stack", "/calc_peaks", "/ai_suggest", "/fit", "/report")):
             self._send(405, "text/plain; charset=utf-8", b"Use POST for this endpoint")
         else:
             # one single-page app; /dashboard and /manual kept as aliases
@@ -1214,6 +1305,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_ai_suggest()
             elif path.endswith("/fit"):
                 self._handle_fit()
+            elif path.endswith("/report"):
+                self._handle_report()
             else:
                 self._handle_analyze()
         except ValueError as exc:
@@ -1286,6 +1379,43 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             pass
         self._send(200, "application/json", json.dumps(out).encode("utf-8"))
+
+    def _handle_report(self) -> None:
+        """Build a one-page PDF report from the current manual deconvolution."""
+        import base64 as _b64
+        payload = self._read_json()
+        pattern = XRDPattern.from_text(payload.get("xy", ""))
+        pk = int(payload.get("peak_count", 2))
+        lock = bool(payload.get("lock_turbostratic")) and pk == 2
+        anchor = payload.get("anchor_002")
+        offset = float(payload.get("two_theta_offset", 0.0) or 0.0)
+        calp = payload.get("calibrate_phase")
+        cal = None
+        if calp and anchor in (None, ""):
+            cal = calibrate_internal_standard(pattern.two_theta, pattern.intensity, calp)
+            if cal["significant"]:
+                offset = -cal["offset"]
+        res = fit_netl(pattern.two_theta, pattern.intensity, peak_count=pk,
+                       turbostratic_center=payload.get("turbostratic_2theta") if lock else None,
+                       lock_turbostratic=lock, subtract_background=bool(payload.get("subtract_background")),
+                       anchor_002=float(anchor) if anchor not in (None, "") else None,
+                       two_theta_offset=offset)
+        try:
+            res["dg_range"] = dg_range(pattern.two_theta, pattern.intensity,
+                                       subtract_background=bool(payload.get("subtract_background")),
+                                       anchor_002=float(anchor) if anchor not in (None, "") else None,
+                                       two_theta_offset=offset)
+        except Exception:  # noqa: BLE001
+            pass
+        quality = None
+        try:
+            quality = scan_impurities(pattern.two_theta, pattern.intensity)
+        except Exception:  # noqa: BLE001
+            pass
+        pdf = render_report_pdf(res, sample=payload.get("sample", "XRD sample"),
+                                sub=payload.get("file", ""), quality=quality, calibration=cal)
+        self._send(200, "application/json",
+                   json.dumps({"pdf": _b64.b64encode(pdf).decode("ascii")}).encode("utf-8"))
 
     def _handle_ai_suggest(self) -> None:
         """AI-assisted deconvolution: features → Claude API → NETL fit."""
