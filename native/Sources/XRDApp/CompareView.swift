@@ -56,6 +56,11 @@ struct CompareView: View {
 
     private var chart: some View {
         let pts = points()
+        let xs = pts.map(\.x), ys = pts.map(\.y)
+        let xlo = xs.min() ?? 0, xhi = xs.max() ?? 1
+        let ylo = ys.min() ?? 0, yhi = ys.max() ?? 1
+        let xpad = Swift.max((xhi - xlo) * 0.08, 0.5)
+        let ypad = Swift.max((yhi - ylo) * 0.08, 0.5)
         return Chart {
             ForEach(trend(pts)) { p in
                 LineMark(x: .value("x", p.x), y: .value("y", p.y), series: .value("g", p.group))
@@ -66,6 +71,8 @@ struct CompareView: View {
                     .foregroundStyle(by: .value("Group", p.group)).symbolSize(70)
             }
         }
+        .chartXScale(domain: (xlo - xpad)...(xhi + xpad))
+        .chartYScale(domain: (ylo - ypad)...(yhi + ypad))
         .chartXAxisLabel(xm.rawValue)
         .chartYAxisLabel(ym.rawValue)
         .chartLegend(grp == .none ? .hidden : .visible)

@@ -17,7 +17,15 @@ struct FitChartView: View {
         let raw = zip(result.pointsX, result.pointsY).map { P(x: $0, y: $1) }
         let (graph, turbo, total) = curves()
 
-        Chart {
+        // Explicit domains so the axes match the data (Charts auto-scaling can drift).
+        let xs = result.pointsX
+        let xlo = xs.min() ?? 24, xhi = xs.max() ?? 28.5
+        let allY = result.pointsY + total.map(\.y)
+        let ymax = allY.max() ?? 1
+        let ymin = Swift.min(result.y0, allY.min() ?? 0)
+        let pad = Swift.max((ymax - ymin) * 0.06, 1e-6)
+
+        return Chart {
             ForEach(raw) { p in
                 PointMark(x: .value("2θ", p.x), y: .value("Intensity", p.y))
                     .foregroundStyle(by: .value("Series", "Raw data"))
@@ -46,6 +54,8 @@ struct FitChartView: View {
             "Raw data": Color.secondary, "Graphitic": cGraph,
             "Turbostratic": cTurbo, "Total fit": cFit,
         ])
+        .chartXScale(domain: xlo...xhi)
+        .chartYScale(domain: (ymin - pad)...(ymax + pad))
         .chartXAxisLabel("2θ  (degrees)")
         .chartYAxisLabel("Intensity  (a.u.)")
         .chartLegend(position: .top, alignment: .leading)

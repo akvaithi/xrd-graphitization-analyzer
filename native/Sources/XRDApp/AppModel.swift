@@ -20,13 +20,35 @@ struct LoadedFile: Identifiable {
     var failed: Bool { pattern == nil || autoResult == nil }
 }
 
+/// Per-file deconvolution choices + last AI run — persisted in AppModel so they
+/// survive navigation and tab switches (DetailView is recreated on each visit).
+struct DeconvSettings: Equatable {
+    var peakCount = 2
+    var subtractBg = false
+    var turboLocked = false
+    var turboCenter = 26.2
+    var anchorOn = false
+    var anchorTarget = 26.54
+    var calStdPhase = ""          // "" off, "auto"/"Fe3C"/"alpha-Fe"/"CaO"
+    var aiNote: String? = nil
+    var aiConfidence: Double? = nil
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var files: [LoadedFile] = []
     @Published var selection: LoadedFile.ID?
     @Published var openRequested = false
+    @Published var settings: [LoadedFile.ID: DeconvSettings] = [:]
 
     func requestOpen() { openRequested = true }
+
+    /// Import defaults for a file (turbostratic seed from the auto-fit).
+    func defaults(for file: LoadedFile) -> DeconvSettings {
+        var s = DeconvSettings()
+        if let t = file.autoResult?.turbostratic { s.turboCenter = t.xc }
+        return s
+    }
 
     func open(_ urls: [URL]) {
         var added: [LoadedFile] = []

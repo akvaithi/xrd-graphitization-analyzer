@@ -19,7 +19,7 @@ struct AnalyzeView: View {
                 .tag(file.id)
             }
             .navigationTitle("Runs")
-            .frame(minWidth: 240)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 300)
             .overlay {
                 if model.files.isEmpty {
                     ContentUnavailableView("No runs loaded", systemImage: "tray",

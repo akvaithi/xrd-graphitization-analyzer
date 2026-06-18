@@ -43,11 +43,16 @@ struct StackView: View {
     private var chart: some View {
         let s = series()
         let many = selected.count > 10
+        let xlo = zoom ? 24.0 : 20.0, xhi = zoom ? 30.0 : 60.0
+        let ys = s.map(\.y)
+        let yhi = (ys.max() ?? 1), ylo = Swift.min(0, ys.min() ?? 0)
         return Chart(s) { p in
             LineMark(x: .value("2θ", p.x), y: .value("Intensity", p.y), series: .value("File", p.name))
                 .foregroundStyle(by: .value("File", p.name))
                 .lineStyle(StrokeStyle(lineWidth: 1.2))
         }
+        .chartXScale(domain: xlo...xhi)
+        .chartYScale(domain: ylo...(yhi * 1.04 + 1e-6))
         .chartXAxisLabel("2θ  (degrees)")
         .chartYAxisLabel("Intensity  (a.u.)" + (offset > 0 ? "  — offset" : ""))
         .chartLegend(many ? .hidden : .visible)

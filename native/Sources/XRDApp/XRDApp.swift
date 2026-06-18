@@ -24,9 +24,9 @@ struct XRDApp: App {
             RootView()
                 .environmentObject(model)
                 .environmentObject(OllamaServer.shared)
-                .frame(minWidth: 940, minHeight: 580)
+                .frame(minWidth: 1040, minHeight: 600)
         }
-        .defaultSize(width: 1040, height: 660)
+        .defaultSize(width: 1180, height: 720)
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) {

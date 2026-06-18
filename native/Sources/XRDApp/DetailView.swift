@@ -4,14 +4,12 @@ import XRDCore
 struct DetailView: View {
     let file: LoadedFile
     @EnvironmentObject private var server: OllamaServer
+    @EnvironmentObject private var model: AppModel
 
-    @State private var peakCount = 2
-    @State private var subtractBg = false
-    @State private var turboCenter = 26.2
-    @State private var turboLocked = false
-    @State private var anchorOn = false
-    @State private var anchorTarget = 26.54
-    @State private var calStdPhase = ""          // "" off, "auto"/"Fe3C"/"alpha-Fe"/"CaO"
+    // Persisted per-file deconvolution choices (lives in AppModel; survives nav).
+    @State private var local = DeconvSettings()
+
+    // Transient — recomputed by refit() from `local`.
     @State private var calResult: InternalStandard?
     @State private var result: DGResult?
     @State private var fitError: String?
@@ -21,8 +19,6 @@ struct DetailView: View {
     // AI assist (local Ollama)
     @State private var ollamaHost = ProcessInfo.processInfo.environment["OLLAMA_HOST"] ?? "http://localhost:11434"
     @State private var aiBusy = false
-    @State private var aiNote: String?
-    @State private var aiConfidence: Double?
 
     var body: some View {
         Group {
@@ -32,7 +28,7 @@ struct DetailView: View {
             } else {
                 HSplitView {
                     controlsAndResults
-                        .frame(minWidth: 320, idealWidth: 350, maxWidth: 440)
+                        .frame(minWidth: 300, idealWidth: 330, maxWidth: 380)
                     Group {
                         if let r = result {
                             FitChartView(result: r).padding(16)
@@ -41,14 +37,20 @@ struct DetailView: View {
                                 description: Text(fitError ?? "Adjust the deconvolution settings."))
                         }
                     }
-                    .frame(minWidth: 440)
+                    .frame(minWidth: 380, maxWidth: .infinity)
                 }
             }
         }
         .navigationTitle(file.displayName)
         .navigationSubtitle(file.url.lastPathComponent)
-        .onAppear { seedFromAuto(); refit() }
-        .onChange(of: file.id) { seedFromAuto(); refit() }
+        .onAppear { loadSettings(); refit() }
+        .onChange(of: file.id) { loadSettings(); refit() }
+        .onChange(of: local) { model.settings[file.id] = local; refit() }
+    }
+
+    private func loadSettings() {
+        quality = file.pattern.map { ImpurityScan.scan($0) }
+        local = model.settings[file.id] ?? model.defaults(for: file)
     }
 
     // MARK: controls + readout
@@ -59,48 +61,48 @@ struct DetailView: View {
                 if let r = result { dgCallout(r) }
                 if let q = quality, !q.hits.isEmpty { qualityCard(q) }
 
-                GroupBox("Deconvolution") {
+                GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Picker("Peaks", selection: $peakCount) {
+                        HStack {
+                            Text("Deconvolution").font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            Button { local = model.defaults(for: file) } label: {
+                                Label("Reset", systemImage: "arrow.uturn.backward")
+                            }
+                            .controlSize(.small)
+                            .disabled(local == model.defaults(for: file))
+                            .help("Restore the import defaults")
+                        }
+                        Picker("Peaks", selection: $local.peakCount) {
                             Text("1 peak").tag(1)
                             Text("2 peaks").tag(2)
                         }
                         .pickerStyle(.segmented)
-                        .onChange(of: peakCount) { refit() }
 
-                        if peakCount == 2 {
-                            HStack {
-                                Toggle("Lock turbostratic 2θ", isOn: $turboLocked)
-                                    .onChange(of: turboLocked) { refit() }
-                                Spacer()
-                                if turboLocked {
-                                    Button("Auto") { turboLocked = false; refit() }
-                                        .controlSize(.small)
+                        if local.peakCount == 2 {
+                            Toggle("Lock turbostratic 2θ", isOn: $local.turboLocked)
+                            if local.turboLocked {
+                                HStack(spacing: 8) {
+                                    Text("Turbostratic 2θ").foregroundStyle(.secondary).font(.caption)
+                                    TextField("26.20", value: $local.turboCenter, format: .number)
+                                        .textFieldStyle(.roundedBorder).frame(width: 70)
+                                    Text("°").foregroundStyle(.secondary)
+                                    Spacer()
                                 }
-                            }
-                            HStack(spacing: 8) {
-                                Text("Turbostratic").foregroundStyle(.secondary).font(.caption)
-                                Slider(value: $turboCenter, in: 25.1...26.45) { editing in
-                                    if !editing { turboLocked = true; refit() }
-                                }
-                                Text(String(format: "%.3f°", turboCenter))
-                                    .font(.caption).monospacedDigit().frame(width: 56, alignment: .trailing)
                             }
                         }
 
-                        Toggle("Subtract sloped background (24–26.5°)", isOn: $subtractBg)
-                            .onChange(of: subtractBg) { refit() }
+                        Toggle("Subtract sloped background (24–26.5°)", isOn: $local.subtractBg)
 
                         Divider()
                         HStack(spacing: 8) {
                             Text("Internal-std calib").foregroundStyle(.secondary).font(.caption)
-                            Picker("", selection: $calStdPhase) {
+                            Picker("", selection: $local.calStdPhase) {
                                 Text("off").tag(""); Text("auto").tag("auto")
                                 Text("Fe₃C").tag("Fe3C"); Text("α-Fe").tag("alpha-Fe"); Text("CaO").tag("CaO")
                             }.labelsHidden().frame(width: 90)
-                                .onChange(of: calStdPhase) { refit() }
                             Spacer()
-                            if !calStdPhase.isEmpty, let c = calResult, let ph = c.phase {
+                            if !local.calStdPhase.isEmpty, let c = calResult, let ph = c.phase {
                                 Text(c.significant
                                      ? String(format: "%@ %+.3f° ✓", ph, c.offset)
                                      : String(format: "%@ %+.3f° (noise)", ph, c.offset))
@@ -108,14 +110,12 @@ struct DetailView: View {
                                     .foregroundStyle(c.significant ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                             }
                         }
-                        Toggle("Anchor (002) to a known angle", isOn: $anchorOn)
-                            .onChange(of: anchorOn) { refit() }
-                        if anchorOn {
+                        Toggle("Anchor (002) to a known angle", isOn: $local.anchorOn)
+                        if local.anchorOn {
                             HStack(spacing: 8) {
                                 Text("Anchor (002) to").foregroundStyle(.secondary).font(.caption)
-                                TextField("26.54", value: $anchorTarget, format: .number)
+                                TextField("26.54", value: $local.anchorTarget, format: .number)
                                     .textFieldStyle(.roundedBorder).frame(width: 70)
-                                    .onSubmit { refit() }
                                 Text("°").foregroundStyle(.secondary)
                                 Spacer()
                                 if let r = result, r.twoThetaOffset != 0 {
@@ -221,30 +221,18 @@ struct DetailView: View {
 
     // MARK: fit
 
-    private func seedFromAuto() {
-        peakCount = 2; subtractBg = false; turboLocked = false; anchorOn = false
-        calStdPhase = ""; calResult = nil
-        quality = file.pattern.map { ImpurityScan.scan($0) }
-        if let p = file.pattern, let auto = try? GraphitizationAnalyzer(p).run(),
-           let t = auto.turbostratic {
-            turboCenter = t.xc
-        } else {
-            turboCenter = 26.2
-        }
-    }
-
     private func refit() {
         guard let p = file.pattern else { result = nil; return }
         var o = FitOptions()
-        o.peakCount = peakCount
-        o.subtractBackground = subtractBg
-        o.lockTurbostratic = turboLocked
-        o.turbostraticCenter = turboLocked ? turboCenter : nil
-        o.anchor002 = (anchorOn && anchorTarget > 0) ? anchorTarget : nil
+        o.peakCount = local.peakCount
+        o.subtractBackground = local.subtractBg
+        o.lockTurbostratic = local.turboLocked
+        o.turbostraticCenter = local.turboLocked ? local.turboCenter : nil
+        o.anchor002 = (local.anchorOn && local.anchorTarget > 0) ? local.anchorTarget : nil
         // Internal-standard calibration (residual phase) — used when no explicit anchor.
         calResult = nil
-        if !calStdPhase.isEmpty, o.anchor002 == nil {
-            let cal = InternalStandard.calibrate(p, phase: calStdPhase)
+        if !local.calStdPhase.isEmpty, o.anchor002 == nil {
+            let cal = InternalStandard.calibrate(p, phase: local.calStdPhase)
             calResult = cal
             if cal.significant { o.twoThetaOffset = -cal.offset }
         }
@@ -264,7 +252,7 @@ struct DetailView: View {
                 HStack {
                     Label("AI assist", systemImage: "sparkles").font(.system(size: 12, weight: .semibold))
                     Spacer()
-                    if let c = aiConfidence {
+                    if let c = local.aiConfidence {
                         Text(String(format: "conf %.0f%%", c * 100))
                             .font(.caption2).padding(.horizontal, 7).padding(.vertical, 2)
                             .background((c < 0.8 ? Color.orange : Color.green).opacity(0.22), in: Capsule())
@@ -288,9 +276,9 @@ struct DetailView: View {
                     Button { saveReport() } label: { Label("Report (CSV)", systemImage: "square.and.arrow.down") }
                         .disabled(result == nil)
                 }
-                if let note = aiNote {
+                if let note = local.aiNote {
                     Text(note).font(.caption)
-                        .foregroundStyle((aiConfidence ?? 1) < 0.8 ? .orange : .secondary)
+                        .foregroundStyle((local.aiConfidence ?? 1) < 0.8 ? .orange : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(server.bundled
@@ -310,7 +298,7 @@ struct DetailView: View {
 
     private func runAI() {
         guard let p = file.pattern else { return }
-        aiBusy = true; aiNote = nil; aiConfidence = nil
+        aiBusy = true
         let host = effectiveHost ?? AISuggester.defaultHost
         // Measure displacement deterministically from a residual phase first; feed
         // the AI calibrated data (more accurate than it guessing displacement).
@@ -321,35 +309,37 @@ struct DetailView: View {
             do {
                 let (s, feats) = try await AISuggester.suggest(aiPattern, ollamaHost: host)
                 await MainActor.run {
-                    aiConfidence = s.confidence
                     if s.amorphousInvalid {
-                        aiNote = "⚠︎ Flagged as too amorphous for this method. " + s.rationale
-                        aiBusy = false; return
+                        var v = local; v.aiConfidence = s.confidence
+                        v.aiNote = "⚠︎ Flagged as too amorphous for this method. " + s.rationale
+                        local = v; aiBusy = false; return
                     }
-                    peakCount = s.peakCount
-                    subtractBg = s.subtractBackground
-                    if let t = s.turbostraticCenter { turboCenter = t; turboLocked = true }
-                    else { turboLocked = false }
-                    // Prefer the measured internal-standard offset over the AI guess.
-                    if cal.significant {
-                        calStdPhase = "auto"; anchorOn = false
+                    // Build one settings update so persistence/refit fire once.
+                    var v = local
+                    v.peakCount = s.peakCount
+                    v.subtractBg = s.subtractBackground
+                    if let t = s.turbostraticCenter { v.turboCenter = t; v.turboLocked = true }
+                    else { v.turboLocked = false }
+                    if cal.significant {                       // measured offset beats AI guess
+                        v.calStdPhase = "auto"; v.anchorOn = false
                     } else if s.displacementSuspected, s.suggested002Anchor > 0 {
-                        anchorOn = true; anchorTarget = s.suggested002Anchor
+                        v.anchorOn = true; v.anchorTarget = s.suggested002Anchor
                     }
-                    refit()
-                    aiNote = ((s.confidence < 0.8) ? "Review suggested (low confidence). " : "") + s.rationale
+                    v.aiConfidence = s.confidence
+                    v.aiNote = ((s.confidence < 0.8) ? "Review suggested (low confidence). " : "") + s.rationale
+                    local = v                                  // → onChange persists + refits
+                    aiBusy = false
                     if let r = result {
                         DecisionLog.append(DecisionLogEntry(
                             file: file.url.lastPathComponent, displayName: file.displayName,
                             features: feats, suggestion: s,
-                            finalPeakCount: peakCount,
-                            finalTurbostratic2theta: turboLocked ? turboCenter : nil,
-                            finalSubtractBackground: subtractBg, dgPercent: r.dgPercent))
+                            finalPeakCount: v.peakCount,
+                            finalTurbostratic2theta: v.turboLocked ? v.turboCenter : nil,
+                            finalSubtractBackground: v.subtractBg, dgPercent: r.dgPercent))
                     }
-                    aiBusy = false
                 }
             } catch {
-                await MainActor.run { aiNote = "AI error: \(error)"; aiBusy = false }
+                await MainActor.run { var v = local; v.aiNote = "AI error: \(error)"; local = v; aiBusy = false }
             }
         }
     }
