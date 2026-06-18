@@ -99,7 +99,7 @@ GOLD = list(gold_samples())
 def test_pseudo_voigt_unit_area():
     x = np.arange(20, 33, 0.002)
     for mu in (0.0, 0.5, 1.0):
-        trapz = getattr(np, "trapezoid", np.trapz)
+        trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
         area = trapz(xa.pseudo_voigt(x, 1.0, 26.5, 0.2, mu), x)
         assert abs(area - 1.0) < 0.02, f"μ={mu} area={area}"
 
