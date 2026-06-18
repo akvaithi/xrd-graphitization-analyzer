@@ -63,7 +63,20 @@ and the whole pattern is shifted by that constant offset before fitting; the
 applied Δ2θ is reported so the correction is transparent and reproducible
 (`fit_netl(..., anchor_002=26.54)` / desktop "Calibrate (002) position" toggle).
 Anchoring assumes a well-ordered graphitic phase — an internal standard is the
-rigorous alternative.
+rigorous alternative (below).
+
+**Internal-standard calibration (rigorous).** When the scan contains residual
+crystalline phases (Fe₃C, α-Fe, CaO from incomplete washing), their lattice-fixed
+reflections are a built-in 2θ reference. `calibrate_internal_standard()` indexes a
+chosen phase (or `auto`), matches its lines to observed peaks, and — only if they
+agree on one offset (tight spread) **above a ~0.05° lattice-uncertainty floor** —
+reports a *significant* shift to apply. Validated: it leaves the (well-aligned)
+postdoc gold samples untouched (MAE 0.96% → 0.96%, sub-floor offsets ignored)
+while recovering a real +0.05–0.09° shift on miscalibrated runs (turning
+unphysical DG >100% into a sensible ~92–96%). The AI assist consumes this too —
+when a reliable internal standard is present the 2θ is calibrated before the model
+sees the features, so it no longer has to guess displacement. Mirrored in web +
+desktop; the offset is reported either way. DG is computed locally throughout.
 
 Validated against the NETL/postdoc OriginLab fits: mean abs error ≈ 1.3 DG% across
 the GPC/CPC sample set. X-ray wavelength is fixed to Cu Kα **λ = 1.54187 Å**.

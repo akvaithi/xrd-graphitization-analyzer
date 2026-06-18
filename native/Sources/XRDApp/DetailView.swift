@@ -11,6 +11,8 @@ struct DetailView: View {
     @State private var turboLocked = false
     @State private var anchorOn = false
     @State private var anchorTarget = 26.54
+    @State private var calStdPhase = ""          // "" off, "auto"/"Fe3C"/"alpha-Fe"/"CaO"
+    @State private var calResult: InternalStandard?
     @State private var result: DGResult?
     @State private var fitError: String?
     @State private var quality: ImpurityScan?
@@ -89,7 +91,23 @@ struct DetailView: View {
                             .onChange(of: subtractBg) { refit() }
 
                         Divider()
-                        Toggle("Calibrate (002) position (specimen displacement)", isOn: $anchorOn)
+                        HStack(spacing: 8) {
+                            Text("Internal-std calib").foregroundStyle(.secondary).font(.caption)
+                            Picker("", selection: $calStdPhase) {
+                                Text("off").tag(""); Text("auto").tag("auto")
+                                Text("Fe₃C").tag("Fe3C"); Text("α-Fe").tag("alpha-Fe"); Text("CaO").tag("CaO")
+                            }.labelsHidden().frame(width: 90)
+                                .onChange(of: calStdPhase) { refit() }
+                            Spacer()
+                            if !calStdPhase.isEmpty, let c = calResult, let ph = c.phase {
+                                Text(c.significant
+                                     ? String(format: "%@ %+.3f° ✓", ph, c.offset)
+                                     : String(format: "%@ %+.3f° (noise)", ph, c.offset))
+                                    .font(.caption2).monospacedDigit()
+                                    .foregroundStyle(c.significant ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                            }
+                        }
+                        Toggle("Anchor (002) to a known angle", isOn: $anchorOn)
                             .onChange(of: anchorOn) { refit() }
                         if anchorOn {
                             HStack(spacing: 8) {
@@ -198,6 +216,7 @@ struct DetailView: View {
 
     private func seedFromAuto() {
         peakCount = 2; subtractBg = false; turboLocked = false; anchorOn = false
+        calStdPhase = ""; calResult = nil
         quality = file.pattern.map { ImpurityScan.scan($0) }
         if let p = file.pattern, let auto = try? GraphitizationAnalyzer(p).run(),
            let t = auto.turbostratic {
@@ -215,6 +234,13 @@ struct DetailView: View {
         o.lockTurbostratic = turboLocked
         o.turbostraticCenter = turboLocked ? turboCenter : nil
         o.anchor002 = (anchorOn && anchorTarget > 0) ? anchorTarget : nil
+        // Internal-standard calibration (residual phase) — used when no explicit anchor.
+        calResult = nil
+        if !calStdPhase.isEmpty, o.anchor002 == nil {
+            let cal = InternalStandard.calibrate(p, phase: calStdPhase)
+            calResult = cal
+            if cal.significant { o.twoThetaOffset = -cal.offset }
+        }
         do { result = try GraphitizationAnalyzer(p).run(o); fitError = nil }
         catch { result = nil; fitError = String(describing: error) }
     }
@@ -272,9 +298,14 @@ struct DetailView: View {
         guard let p = file.pattern else { return }
         aiBusy = true; aiNote = nil; aiConfidence = nil
         let host = effectiveHost ?? AISuggester.defaultHost
+        // Measure displacement deterministically from a residual phase first; feed
+        // the AI calibrated data (more accurate than it guessing displacement).
+        let cal = InternalStandard.calibrate(p, phase: "auto")
+        let aiPattern = cal.significant
+            ? XRDPattern(twoTheta: p.twoTheta.map { $0 - cal.offset }, intensity: p.intensity) : p
         Task {
             do {
-                let (s, feats) = try await AISuggester.suggest(p, ollamaHost: host)
+                let (s, feats) = try await AISuggester.suggest(aiPattern, ollamaHost: host)
                 await MainActor.run {
                     aiConfidence = s.confidence
                     if s.amorphousInvalid {
@@ -285,7 +316,10 @@ struct DetailView: View {
                     subtractBg = s.subtractBackground
                     if let t = s.turbostraticCenter { turboCenter = t; turboLocked = true }
                     else { turboLocked = false }
-                    if s.displacementSuspected, s.suggested002Anchor > 0 {
+                    // Prefer the measured internal-standard offset over the AI guess.
+                    if cal.significant {
+                        calStdPhase = "auto"; anchorOn = false
+                    } else if s.displacementSuspected, s.suggested002Anchor > 0 {
                         anchorOn = true; anchorTarget = s.suggested002Anchor
                     }
                     refit()

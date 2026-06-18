@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 import warnings
@@ -455,6 +456,122 @@ def scan_impurities(two_theta, intensity, *, tol: float = 0.45,
         verdict = "Trace impurities only — essentially clean."
     return {"verdict": verdict, "impurities": impurities,
             "clean": bool(worst < 2), "worst_pct": round(worst, 1)}
+
+
+# --------------------------------------------------------------------------
+# Internal-standard 2theta calibration
+# --------------------------------------------------------------------------
+# Residual catalyst/carbonate phases have lattice-fixed d-spacings (independent
+# of graphitization), so their reflections are a built-in 2theta reference. We
+# index a chosen phase, match its lines to observed peaks, and if they agree on
+# one offset (tight spread) we use that to correct specimen-displacement / zero
+# error -- far more rigorous than anchoring the (002) to a guessed angle.
+_CALIB_PHASES = {
+    "Fe3C":     {"system": "ortho", "abc": (5.0896, 6.7443, 4.5248), "label": "cementite Fe₃C"},
+    "alpha-Fe": {"system": "cubic", "a": 2.8664, "label": "metallic α-Fe"},
+    "CaO":      {"system": "cubic", "a": 4.8105, "label": "lime CaO"},
+}
+# graphite's own reflections — never use these as the foreign-phase reference
+_GRAPHITE_LINES_DEG = (26.55, 42.4, 44.6, 50.6, 54.7, 77.5, 83.6)
+
+
+def _phase_lines(phase: str, wavelength: float, lo: float = 32.0, hi: float = 90.0) -> list[float]:
+    spec = _CALIB_PHASES[phase]
+    out = []
+    for h in range(4):
+        for k in range(4):
+            for l in range(4):
+                if h == k == l == 0:
+                    continue
+                if spec["system"] == "cubic":
+                    a = spec["a"]; inv = (h * h + k * k + l * l) / (a * a)
+                else:
+                    a, b, c = spec["abc"]; inv = h * h / (a * a) + k * k / (b * b) + l * l / (c * c)
+                s = wavelength / (2.0 / math.sqrt(inv))
+                if s > 1.0:
+                    continue
+                t = 2.0 * math.degrees(math.asin(s))
+                if lo <= t <= hi:
+                    out.append(t)
+    out = sorted(set(round(t, 3) for t in out))
+    dedup = []
+    for t in out:
+        if not dedup or t - dedup[-1] > 0.15:
+            dedup.append(t)
+    return dedup
+
+
+def _local_peaks(x, y, lo, hi, min_prom_frac=0.02):
+    """Local-prominence peaks (parabolic-refined centre) in [lo, hi]."""
+    o = np.argsort(x); x, y = x[o], y[o]
+    half = 40
+    pad = np.pad(y, half, mode="edge")
+    rollmin = np.array([pad[i:i + 2 * half + 1].min() for i in range(len(y))])
+    prom = y - rollmin
+    ymax = float(y.max())
+    out = []
+    for i in range(6, len(y) - 6):
+        if not (lo <= x[i] <= hi):
+            continue
+        if y[i] == y[i - 6:i + 7].max() and prom[i] > min_prom_frac * ymax:
+            xs, ys = x[i - 3:i + 4], y[i - 3:i + 4]
+            c = np.polyfit(xs, ys, 2)
+            cen = -c[1] / (2 * c[0]) if c[0] < 0 else x[i]
+            if not out or cen - out[-1][0] > 0.4:
+                out.append([float(cen), float(prom[i])])
+    return out
+
+
+def calibrate_internal_standard(two_theta, intensity, phase: str = "auto", *,
+                                wavelength: float = DEFAULT_WAVELENGTH,
+                                tol: float = 0.40, min_lines: int = 3,
+                                max_spread: float = 0.06, max_offset: float = 0.8,
+                                min_significant: float = 0.05) -> dict:
+    """Estimate the 2theta offset from a residual-phase internal standard.
+
+    ``phase`` is one of ``Fe3C`` / ``alpha-Fe`` / ``CaO`` or ``"auto"`` (try all,
+    keep the best-supported reliable match). Returns the median offset across the
+    matched lines (observed - reference), its spread, and a ``reliable`` flag
+    (enough lines that agree). Apply ``-offset`` via ``fit_netl(two_theta_offset=)``.
+    """
+    tt = np.asarray(two_theta, float)
+    inten = np.asarray(intensity, float)
+    peaks = _local_peaks(tt, inten, 32.0, 90.0)
+    phases = [phase] if phase in _CALIB_PHASES else list(_CALIB_PHASES)
+    best = None
+    for ph in phases:
+        matches = []
+        for L in _phase_lines(ph, wavelength):
+            if any(abs(L - g) < 0.5 for g in _GRAPHITE_LINES_DEG):
+                continue  # avoid graphite-overlapped reference lines
+            cand = [p for p in peaks if abs(p[0] - L) < tol]
+            if cand:
+                pk = min(cand, key=lambda p: abs(p[0] - L))
+                matches.append((round(L, 3), round(pk[0], 3), round(pk[0] - L, 4)))
+        if len(matches) < min_lines:
+            continue
+        d = np.array([m[2] for m in matches])
+        off = float(np.median(d))
+        keep = [m for m in matches if abs(m[2] - off) <= 0.10]  # drop outlier mis-assignments
+        if len(keep) < min_lines:
+            continue
+        d = np.array([m[2] for m in keep])
+        off = float(np.median(d)); spread = float(np.std(d))
+        reliable = spread <= max_spread and abs(off) <= max_offset
+        # below the reference-lattice uncertainty floor (~0.05deg) the offset is
+        # within method noise — report it but don't treat it as a real shift.
+        significant = reliable and abs(off) >= min_significant
+        res = {"phase": ph, "phase_label": _CALIB_PHASES[ph]["label"],
+               "offset": round(off, 4), "spread": round(spread, 4),
+               "n_lines": len(keep), "matches": keep,
+               "reliable": bool(reliable), "significant": bool(significant)}
+        rank = (reliable, len(keep), -spread)
+        if best is None or rank > (best["reliable"], best["n_lines"], -best["spread"]):
+            best = res
+    if best is None:
+        return {"phase": None, "phase_label": None, "offset": 0.0, "spread": None,
+                "n_lines": 0, "matches": [], "reliable": False, "significant": False}
+    return best
 
 
 def _y0_pv(x, y0, A, xc, w, mu):

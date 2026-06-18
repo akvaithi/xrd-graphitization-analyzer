@@ -49,6 +49,7 @@ from xrd_analyzer import (
     FitError,
     GraphitizationAnalyzer,
     XRDPattern,
+    calibrate_internal_standard,
     dg_from_peaks,
     fit_netl,
     pseudo_voigt,
@@ -647,6 +648,8 @@ PAGE_HTML = """<!DOCTYPE html>
     <label class="tog"><input type="checkbox" id="mBg"> Subtract background</label>
     <label class="tog"><input type="checkbox" id="mCal"> Calibrate (002) to</label>
     <input id="mAnchor" class="num2" type="number" step="0.01" value="26.54" disabled><span class="muted">°</span>
+    <label class="tog">Internal-std calib
+      <select id="mCalStd"><option value="">off</option><option value="auto">auto</option><option value="Fe3C">Fe₃C</option><option value="alpha-Fe">α-Fe</option><option value="CaO">CaO</option></select></label>
     <span id="mOffset" class="muted"></span>
   </div>
   <div class="grid2">
@@ -735,7 +738,7 @@ const resultsEl=$('results'), plotWrap=$('plotwrap');
 const fileBar=$('fileBar'), fileSel=$('fileSel'), prevBtn=$('prevBtn'), nextBtn=$('nextBtn'), fileInfo=$('fileInfo');
 const aiBar=$('aiBar'), aiBtn=$('aiBtn'), aiNote=$('aiNote');
 const manualBar=$('manualBar'), mPeaks=$('mPeaks'), mTurboLock=$('mTurboLock'), mTurbo=$('mTurbo'),
-      mBg=$('mBg'), mCal=$('mCal'), mAnchor=$('mAnchor'), mOffset=$('mOffset');
+      mBg=$('mBg'), mCal=$('mCal'), mAnchor=$('mAnchor'), mCalStd=$('mCalStd'), mOffset=$('mOffset');
 const ySel=$('ySel'), xSel=$('xSel'), gSel=$('gSel'), csvBtn=$('csvBtn');
 const chartWrap=$('chartwrap'), filtersEl=$('filters');
 const tablewrap=$('tablewrap'), chipsEl=$('chips');
@@ -831,7 +834,9 @@ async function runAISuggest(i){
     mTurboLock.checked=mPeaks.value==='2'; mTurbo.disabled=!mTurboLock.checked;
     if(s.turbostratic_2theta) mTurbo.value=(+s.turbostratic_2theta).toFixed(3);
     mBg.checked=!!s.subtract_background;
-    if(s.displacement_suspected && s.suggested_002_anchor){
+    if(d.calibration && d.calibration.significant){
+      mCalStd.value='auto';   // AI used a residual-phase internal standard
+    } else if(s.displacement_suspected && s.suggested_002_anchor){
       mCal.checked=true; mAnchor.disabled=false; mAnchor.value=(+s.suggested_002_anchor).toFixed(2);
     }
     await reFit();
@@ -873,11 +878,12 @@ function manualParams(){
   const p={ peak_count:+mPeaks.value, subtract_background:mBg.checked,
             lock_turbostratic:mTurboLock.checked, turbostratic_2theta:+mTurbo.value };
   if(mCal.checked) p.anchor_002=+mAnchor.value;
+  if(mCalStd.value) p.calibrate_phase=mCalStd.value;
   return p;
 }
 function resetManual(){
   mPeaks.value='2'; mTurboLock.checked=false; mTurbo.disabled=true;
-  mBg.checked=false; mCal.checked=false; mAnchor.disabled=true; mOffset.textContent='';
+  mBg.checked=false; mCal.checked=false; mAnchor.disabled=true; mCalStd.value=''; mOffset.textContent='';
 }
 async function showFit(i){
   if(i<0||i>=files.length) return; curFit=i;
@@ -902,8 +908,15 @@ async function reFit(){
   plotWrap.innerHTML = d.result.plot_png?`<img class="plot" src="${d.result.plot_png}" alt="fit plot">`
                                         :'<span class="placeholder">No plot.</span>';
   const off=d.result.two_theta_offset||0;
-  mOffset.textContent = off ? `Δ2θ ${off>=0?'+':''}${off.toFixed(3)}°` : '';
+  let t = off ? `Δ2θ ${off>=0?'+':''}${off.toFixed(3)}°` : '';
+  const c=d.calibration;
+  if(c && c.phase){
+    t += ` · ${c.phase} std: ${c.offset>=0?'+':''}${c.offset.toFixed(3)}° (${c.n_lines} lines, ±${c.spread})`+
+         (c.significant?' applied':' — within noise, not applied');
+  }
+  mOffset.textContent = t;
 }
+mCalStd.onchange=reFit;
 mPeaks.onchange=()=>{ mTurboLock.disabled=mPeaks.value!=='2'; if(mPeaks.value!=='2'){mTurboLock.checked=false;mTurbo.disabled=true;} reFit(); };
 mTurboLock.onchange=()=>{ mTurbo.disabled=!mTurboLock.checked; reFit(); };
 mTurbo.onchange=()=>{ if(mTurboLock.checked) reFit(); };
@@ -1237,14 +1250,23 @@ class Handler(BaseHTTPRequestHandler):
         pk = int(payload.get("peak_count", 2))
         lock = bool(payload.get("lock_turbostratic")) and pk == 2
         anchor = payload.get("anchor_002")
+        offset = float(payload.get("two_theta_offset", 0.0) or 0.0)
         out: dict = {}
+        # Internal-standard calibration (residual phase) — overrides a raw offset,
+        # but an explicit (002) anchor still wins if the user set one.
+        calp = payload.get("calibrate_phase")
+        if calp and anchor in (None, ""):
+            cal = calibrate_internal_standard(pattern.two_theta, pattern.intensity, calp)
+            out["calibration"] = cal
+            if cal["significant"]:
+                offset = -cal["offset"]
         try:
             res = fit_netl(pattern.two_theta, pattern.intensity, peak_count=pk,
                            turbostratic_center=payload.get("turbostratic_2theta") if lock else None,
                            lock_turbostratic=lock,
                            subtract_background=bool(payload.get("subtract_background")),
                            anchor_002=float(anchor) if anchor not in (None, "") else None,
-                           two_theta_offset=float(payload.get("two_theta_offset", 0.0) or 0.0))
+                           two_theta_offset=offset)
             res["plot_png"] = render_plot_netl(pattern, res, payload.get("theme", "dark"))
             out["result"] = res
         except (FitError, ValueError) as exc:
@@ -1260,19 +1282,28 @@ class Handler(BaseHTTPRequestHandler):
         import ai_suggest  # lazy: only needed when the AI button is used
         payload = self._read_json()
         pattern = XRDPattern.from_text(payload.get("xy", ""))
-        feats = ai_suggest.compute_features(pattern.two_theta, pattern.intensity)
+        # Deterministic internal-standard calibration first (more reliable than the
+        # AI guessing displacement): measure the offset from a residual phase and,
+        # if significant, apply it + tell the AI so it doesn't re-guess displacement.
+        cal = calibrate_internal_standard(pattern.two_theta, pattern.intensity, "auto")
+        std_off = -cal["offset"] if cal["significant"] else 0.0
+        feats = ai_suggest.compute_features(pattern.two_theta + std_off, pattern.intensity)
+        feats["internal_standard_phase"] = cal["phase"] if cal["significant"] else None
+        feats["internal_standard_offset_applied_deg"] = round(std_off, 4)
         try:
             dec = ai_suggest.suggest(feats, payload.get("model"))
         except Exception as exc:  # noqa: BLE001 — surface provider/credential errors cleanly
             self._send(502, "application/json",
                        json.dumps({"error": f"AI provider error — {exc}"}).encode("utf-8"))
             return
-        out: dict = {"suggestion": dec, "features": feats,
+        out: dict = {"suggestion": dec, "features": feats, "calibration": cal,
                      "confidence": dec.get("confidence"), "rationale": dec.get("rationale")}
         if not dec.get("amorphous_invalid"):
-            # Manual calibration from the UI overrides the AI's displacement call.
+            # Precedence: explicit UI anchor > internal standard > AI displacement guess.
             anchor = payload.get("anchor_002")
-            if anchor is None and dec.get("displacement_suspected") and dec.get("suggested_002_anchor"):
+            offset = std_off
+            if anchor is None and std_off == 0.0 and dec.get("displacement_suspected") \
+                    and dec.get("suggested_002_anchor"):
                 anchor = float(dec["suggested_002_anchor"])
             try:
                 res = fit_netl(pattern.two_theta, pattern.intensity,
@@ -1280,7 +1311,7 @@ class Handler(BaseHTTPRequestHandler):
                                turbostratic_center=dec.get("turbostratic_2theta"),
                                lock_turbostratic=int(dec.get("peak_count", 2)) == 2,
                                subtract_background=bool(dec.get("subtract_background")),
-                               anchor_002=anchor)
+                               anchor_002=anchor, two_theta_offset=offset if anchor is None else 0.0)
                 res["plot_png"] = render_plot_netl(pattern, res, payload.get("theme", "dark"))
                 out["result"] = res
             except (FitError, ValueError) as exc:

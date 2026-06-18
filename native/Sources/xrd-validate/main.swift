@@ -45,18 +45,25 @@ if args[1] == "--ai", args.count >= 3 {
 // Optional flags: --turbo <xc> (lock turbostratic), --peaks <1|2>
 var opt = FitOptions()
 var path: String? = nil
+var calibPhase: String? = nil
 var i = 1
 while i < args.count {
     switch args[i] {
     case "--turbo": opt.lockTurbostratic = true; opt.turbostraticCenter = Double(args[i + 1]); i += 2
     case "--peaks": opt.peakCount = Int(args[i + 1]) ?? 2; i += 2
     case "--anchor": opt.anchor002 = Double(args[i + 1]); i += 2
+    case "--calib": calibPhase = args[i + 1]; i += 2
     default: path = args[i]; i += 1
     }
 }
 
 do {
     let pattern = try XRDPattern.parse(contentsOf: URL(fileURLWithPath: path ?? args[1]))
+    if let ph = calibPhase {
+        let c = InternalStandard.calibrate(pattern, phase: ph)
+        print("{\"phase\":\"\(c.phase ?? "none")\",\"offset\":\(c.offset),\"spread\":\(c.spread ?? -1),\"n_lines\":\(c.nLines),\"reliable\":\(c.reliable),\"significant\":\(c.significant)}")
+        if c.significant { opt.twoThetaOffset = -c.offset }
+    }
     let r = try GraphitizationAnalyzer(pattern).run(opt)
     var dict: [String: Double] = [
         "DG_percent": r.dgPercent,
