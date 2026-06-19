@@ -139,11 +139,13 @@ struct DetailView: View {
     private func dgCallout(_ r: DGResult) -> some View {
         VStack(spacing: 4) {
             Text("Degree of Graphitization").font(.caption).foregroundStyle(.secondary)
-            Text(r.dgSigma != nil
-                 ? String(format: "%.2f ± %.2f %%", r.dgPercent, r.dgSigma!)
-                 : String(format: "%.2f %%", r.dgPercent))
-                .font(.system(size: 36, weight: .semibold, design: .rounded))
+            Text(String(format: "%.2f %%", r.dgPercent))
+                .font(.system(size: 38, weight: .semibold, design: .rounded))
                 .foregroundStyle(.tint)
+            if let sg = r.dgSigma {
+                Text(String(format: "± %.2f%%", sg))
+                    .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+            }
             Text("\(r.peakCount == 1 ? "single peak" : "area-weighted") · R² \(String(format: "%.4f", r.fitR2))")
                 .font(.caption2).foregroundStyle(.secondary)
             if let s = dgSpan, s.high - s.low > 0.5 {

@@ -600,7 +600,8 @@ PAGE_HTML = """<!DOCTYPE html>
            border-radius:14px; padding:20px; text-align:center; }
   .dgbox .cap { color:var(--label2); font-size:12px; }
   .dgbox .dg { font-family:var(--font-display); color:var(--accent); font-size:44px; font-weight:600;
-               letter-spacing:-0.02em; margin:6px 0; font-variant-numeric:tabular-nums; }
+               letter-spacing:-0.02em; margin:6px 0 0; font-variant-numeric:tabular-nums; }
+  .dgbox .dgsig { color:var(--label2); font-size:12px; font-variant-numeric:tabular-nums; margin-bottom:4px; }
 
   img.plot, img.chartimg { width:100%; border-radius:10px; display:block; }
   #plotwrap, #chartwrap, #stackwrap { display:flex; align-items:center; justify-content:center;
@@ -715,6 +716,7 @@ PAGE_HTML = """<!DOCTYPE html>
   <div class="ctrls" id="aiBar" style="display:none">
     <button id="aiBtn" class="mini">✨ Suggest deconvolution (Claude)</button>
     <button id="reportBtn" class="mini">⤓ Report (PDF)</button>
+    <button id="resetBtn" class="mini">↺ Reset</button>
     <span id="aiNote" class="muted"></span>
   </div>
   <div class="ctrls" id="manualBar" style="display:none">
@@ -857,7 +859,7 @@ fileInput.addEventListener('change', async e=>{
   try{ files=await Promise.all(fs.map(async f=>({name:f.name, text:await readText(f)}))); }
   catch(err){ setStatus('Read error: '+err,true); return; }
   fnameEl.textContent = files.length===1?files[0].name:`${files.length} files selected`;
-  fitCache={}; curFit=0;
+  fitCache={}; manualState={}; curFit=0;
   await runBatch();
 });
 
@@ -921,17 +923,18 @@ async function runAISuggest(i){
     aiNote.innerHTML=`<b style="color:${c<0.8?'var(--orange)':'var(--green)'}">${(c*100).toFixed(0)}% conf</b>`+
       (c<0.8?' · review suggested':'')+` · ${s.peak_count} peak(s), turbo ${(+s.turbostratic_2theta).toFixed(3)}°`+
       (s.displacement_suspected?` · ⚠ displacement→${(+s.suggested_002_anchor).toFixed(2)}°`:'')+` · ${s.rationale}`;
+    manualState[curFit]=captureManual();   // persist the AI run for this file
     setStatus('AI applied — review the controls');
   }catch(err){ setStatus('AI request failed: '+err,true); }
   finally{ aiBtn.disabled=false; }
 }
 function renderResultsNetl(d, title, sub, s, q){
   const pct=x=>(x*100).toFixed(2)+'%';
-  const sig = (d.DG_sigma!=null) ? ` ± ${d.DG_sigma.toFixed(2)}` : '';
+  const sig = (d.DG_sigma!=null) ? `<div class="dgsig">± ${d.DG_sigma.toFixed(2)}%</div>` : '';
   const rng = d.dg_range ? `<div class="cap">range ${d.dg_range.low.toFixed(1)}–${d.dg_range.high.toFixed(1)}% across deconvolution choices</div>` : '';
   let h=fileHead(title,sub)+
     `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization</div>`+
-    `<div class="dg">${d.DG_percent.toFixed(2)}${sig} %</div><div class="cap">${d.method_name}</div>${rng}</div>`+
+    `<div class="dg">${d.DG_percent.toFixed(2)} %</div>${sig}<div class="cap">${d.method_name}</div>${rng}</div>`+
     qualityBanner(q)+
     `<div class="section">Graphitic peak</div>`+
     row('2θ centre',d.graphitic.xc.toFixed(4),'°')+row('FWHM',d.graphitic.w.toFixed(4),'°')+
@@ -961,15 +964,28 @@ function manualParams(){
   return p;
 }
 function resetManual(){
-  mPeaks.value='2'; mTurboLock.checked=false; mTurbo.disabled=true;
+  mPeaks.value='2'; mTurboLock.checked=false; mTurboLock.disabled=false; mTurbo.disabled=true;
   mBg.checked=false; mCal.checked=false; mAnchor.disabled=true; mCalStd.value=''; mOffset.textContent='';
+}
+// Per-file persistence (parity with the desktop app): manual choices + AI note
+// survive navigating between runs.
+let manualState = {};
+function captureManual(){
+  return {peaks:mPeaks.value, tl:mTurboLock.checked, t:mTurbo.value, bg:mBg.checked,
+          cal:mCal.checked, anc:mAnchor.value, std:mCalStd.value, ai:aiNote.innerHTML};
+}
+function applyManual(m){
+  mPeaks.value=m.peaks; mTurboLock.disabled=(m.peaks!=='2');
+  mTurboLock.checked=m.tl; mTurbo.disabled=!m.tl; mTurbo.value=m.t;
+  mBg.checked=m.bg; mCal.checked=m.cal; mAnchor.disabled=!m.cal; mAnchor.value=m.anc;
+  mCalStd.value=m.std; aiNote.innerHTML=m.ai||'';
 }
 async function showFit(i){
   if(i<0||i>=files.length) return; curFit=i;
   if(files.length>1){ fileSel.value=String(i); prevBtn.disabled=i===0; nextBtn.disabled=i===files.length-1;
     fileInfo.textContent=`File ${i+1} of ${files.length}`; }
-  resetManual();
-  aiNote.textContent='';
+  if(manualState[i]) applyManual(manualState[i]);
+  else { resetManual(); aiNote.textContent=''; }
   await reFit();
 }
 async function reFit(){
@@ -994,8 +1010,12 @@ async function reFit(){
          (c.significant?' applied':' — within noise, not applied');
   }
   mOffset.textContent = t;
+  manualState[curFit] = captureManual();   // persist per file
 }
 mCalStd.onchange=reFit;
+$('resetBtn').addEventListener('click',()=>{
+  delete manualState[curFit]; resetManual(); aiNote.textContent=''; reFit();
+});
 $('reportBtn').addEventListener('click',async()=>{
   const i=curFit; if(i<0||i>=files.length) return;
   const r=rows[i]||{}; setStatus('Building report…');
