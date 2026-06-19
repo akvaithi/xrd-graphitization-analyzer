@@ -716,6 +716,7 @@ PAGE_HTML = """<!DOCTYPE html>
   <div class="ctrls" id="aiBar" style="display:none">
     <button id="aiBtn" class="mini">✨ Suggest deconvolution (Claude)</button>
     <button id="reportBtn" class="mini">⤓ Report (PDF)</button>
+    <button id="anaPng" class="mini">⤓ Chart PNG</button>
     <button id="resetBtn" class="mini">↺ Reset</button>
     <span id="aiNote" class="muted"></span>
   </div>
@@ -745,6 +746,7 @@ PAGE_HTML = """<!DOCTYPE html>
       <label>X <select id="xSel"></select></label>
       <label>Color by <select id="gSel"></select></label>
       <button id="csvBtn" class="mini" disabled>Download CSV</button>
+      <button id="cmpPng" class="mini">⤓ Chart PNG</button>
     </div>
     <div id="filters" class="filters"></div>
     <div id="chartwrap"><div class="placeholder">Upload runs to compare.</div></div>
@@ -764,6 +766,7 @@ PAGE_HTML = """<!DOCTYPE html>
         <span id="offVal" class="muted">0.00</span></label>
       <label class="tog"><input type="checkbox" id="stkZoom"> Zoom (002) 24–30°</label>
       <label class="tog"><input type="checkbox" id="stkBase"> Baseline subtract</label>
+      <button id="stkPng" class="mini">⤓ Chart PNG</button>
     </div>
     <div class="grid-chart">
       <div id="stackwrap"><div class="placeholder">Upload spectra, then check files to stack.</div></div>
@@ -1016,6 +1019,19 @@ mCalStd.onchange=reFit;
 $('resetBtn').addEventListener('click',()=>{
   delete manualState[curFit]; resetManual(); aiNote.textContent=''; reFit();
 });
+// Download the currently-displayed chart PNG from a wrapper element.
+function downloadChart(wrapId, name){
+  const img = document.querySelector('#'+wrapId+' img');
+  if(!img || !img.src.startsWith('data:')){ setStatus('No chart to download yet.',true); return; }
+  const a=document.createElement('a'); a.href=img.src;
+  a.download=name.replace(/[^\w.-]+/g,'_')+'.png';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+$('anaPng').addEventListener('click',()=>{
+  const r=rows[curFit]||{}; downloadChart('plotwrap',(r.label||(files[curFit]&&files[curFit].name)||'fit')+'_002fit');
+});
+$('cmpPng').addEventListener('click',()=>downloadChart('chartwrap','xrd_comparison'));
+$('stkPng').addEventListener('click',()=>downloadChart('stackwrap','xrd_stack'));
 $('reportBtn').addEventListener('click',async()=>{
   const i=curFit; if(i<0||i>=files.length) return;
   const r=rows[i]||{}; setStatus('Building report…');

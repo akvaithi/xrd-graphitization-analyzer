@@ -275,6 +275,10 @@ struct DetailView: View {
                         .disabled(aiBusy || file.pattern == nil || effectiveHost == nil)
                     if aiBusy { ProgressView().controlSize(.small) }
                     Spacer()
+                    Button {
+                        if let r = result { saveChartPNG(FitChartView(result: r), suggestedName: file.displayName + "_002fit") }
+                    } label: { Label("Chart", systemImage: "photo") }
+                        .disabled(result == nil)
                     Button { saveReport() } label: { Label("Report (CSV)", systemImage: "square.and.arrow.down") }
                         .disabled(result == nil)
                 }

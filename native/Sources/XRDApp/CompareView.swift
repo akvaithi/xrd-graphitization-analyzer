@@ -41,6 +41,8 @@ struct CompareView: View {
                     Picker("X", selection: $xm) { ForEach(XMetric.allCases) { Text($0.rawValue).tag($0) } }
                     Picker("Color", selection: $grp) { ForEach(Grouping.allCases) { Text($0.rawValue).tag($0) } }
                     Spacer()
+                    Button { saveChartPNG(chart, suggestedName: "xrd_\(ym.rawValue)_vs_\(xm.rawValue)") }
+                        label: { Label("Chart", systemImage: "photo") }
                     Button { exportCSV() } label: { Label("CSV", systemImage: "square.and.arrow.down") }
                 }
                 .padding(10)

@@ -27,6 +27,8 @@ struct StackView: View {
                     Toggle("Zoom (002) 24–30°", isOn: $zoom)
                     Toggle("Baseline subtract", isOn: $baseline)
                     Spacer()
+                    Button { saveChartPNG(chart, suggestedName: "xrd_stack") }
+                        label: { Label("Chart", systemImage: "photo") }
                 }
                 .padding(10)
                 Divider()
