@@ -12,13 +12,30 @@ time, batch processing, and the one genuinely human judgment — how to deconvol
 the (002) shoulder — made explicit (and optionally AI-assisted), while the DG
 number is always computed deterministically.
 
-**Three front-ends, one engine**
+## Screenshots
+
+**Analyze** — per-file (002) deconvolution with DG ± σ, a defensible range, live
+fit plot, and a residual-phase quality flag:
+
+![Analyze tab](docs/screenshots/web-analyze.png)
+
+**Compare** — any metric vs synthesis parameter, grouped/colored, with trend lines:
+
+![Compare tab](docs/screenshots/web-compare.png)
+
+**Stack spectra** — overlay/waterfall of raw intensities to compare peak heights:
+
+![Stack spectra tab](docs/screenshots/web-stack.png)
+
+*(Shown: the web app. The native macOS app has the same four tabs and controls.)*
+
+## Three front-ends, one engine
 
 | Surface | For | Notes |
 |---|---|---|
 | **CLI** ([xrd_analyzer.py](xrd_analyzer.py)) | scripting, batch, CI | single file / directory → table, JSON, CSV |
 | **Web app** ([xrd_webgui.py](xrd_webgui.py), Docker) | the lab / a shared server | Analyze · Compare · Stack · Manual; runs on your host |
-| **Native macOS app** ([native/](native/), Swift) | desktop, offline | interactive deconvolution, native charts, pure-Swift engine |
+| **Native macOS app** ([native/](native/), Swift) | desktop, offline | interactive deconvolution, native charts, pure-Swift engine, bundled local AI |
 
 **Validated against the postdoc's OriginLab gold standard** (mean abs error):
 expert hand-placement **0.43%**, AI-assisted **~0.9–1.0%** (Claude / local

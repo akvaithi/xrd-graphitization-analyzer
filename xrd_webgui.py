@@ -176,7 +176,7 @@ def render_plot_netl(pattern: XRDPattern, res: dict, theme: str = "dark") -> str
     ax.grid(True, color=pal["grid"], lw=0.6)
     ax.set_xlabel("2θ  (degrees)", color=pal["muted"], fontsize=FS_LABEL)
     ax.set_ylabel("Intensity  (a.u.)", color=pal["muted"], fontsize=FS_LABEL)
-    ax.set_title(f"Carbon (002) fit — DG {res['DG_percent']:.1f}%  (AI-assisted)",
+    ax.set_title(f"Carbon (002) fit — DG {res['DG_percent']:.1f}%",
                  color=pal["text"], fontsize=FS_TITLE, pad=8)
     ax.legend(fontsize=FS_LEGEND, facecolor=pal["face"], edgecolor=pal["muted"],
               labelcolor=pal["text"], framealpha=0.9)
