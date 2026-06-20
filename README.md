@@ -14,20 +14,23 @@ number is always computed deterministically.
 
 ## Screenshots
 
-**Analyze** — per-file (002) deconvolution with DG ± σ, a defensible range, live
-fit plot, and a residual-phase quality flag:
+**Analyze** *(native macOS app)* — per-file (002) deconvolution with DG ± σ and a
+defensible range, an internal-standard 2θ calibration, the residual-phase quality
+flag, on-device AI assist, and a native fit chart:
 
-![Analyze tab](docs/screenshots/web-analyze.png)
+![Analyze tab — native macOS app](docs/screenshots/app-analyze.png)
 
-**Compare** — any metric vs synthesis parameter, grouped/colored, with trend lines:
+**Compare** *(web app)* — any metric vs synthesis parameter, grouped/colored, with
+trend lines:
 
 ![Compare tab](docs/screenshots/web-compare.png)
 
-**Stack spectra** — overlay/waterfall of raw intensities to compare peak heights:
+**Stack spectra** *(web app)* — overlay/waterfall of raw intensities to compare
+peak heights:
 
 ![Stack spectra tab](docs/screenshots/web-stack.png)
 
-*(Shown: the web app. The native macOS app has the same four tabs and controls.)*
+*(The web and native apps share the same four tabs and controls.)*
 
 ## Three front-ends, one engine
 
