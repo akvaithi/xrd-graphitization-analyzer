@@ -18,6 +18,11 @@ public struct InternalStandard: Sendable {
     public let reliable: Bool           // lines agree (tight spread)
     public let significant: Bool        // reliable AND above the ~0.05° noise floor
 
+    // Lattice constants are room-temperature reference values (Å). Sources:
+    //   Fe3C     orthorhombic Pnma  — ICDD PDF 00-035-0772, after Fasiska & Jeffrey,
+    //            Acta Cryst. 19 (1965) 463–471 (a,b,c here are the Pnma cell).
+    //   alpha-Fe cubic Im-3m (bcc)  — ICDD PDF 00-006-0696, a=2.8664 Å at 20 °C.
+    //   CaO      cubic Fm-3m (lime) — ICDD PDF 00-037-1497, a=4.8105 Å.
     private static let phases: [(key: String, label: String, system: String, abc: (Double, Double, Double))] = [
         ("Fe3C", "cementite Fe₃C", "ortho", (5.0896, 6.7443, 4.5248)),
         ("alpha-Fe", "metallic α-Fe", "cubic", (2.8664, 0, 0)),

@@ -16,9 +16,21 @@ struct DetailView: View {
     @State private var quality: ImpurityScan?
     @State private var dgSpan: DGRange?
 
-    // AI assist (local Ollama)
+    // AI assist
     @State private var ollamaHost = ProcessInfo.processInfo.environment["OLLAMA_HOST"] ?? "http://localhost:11434"
     @State private var aiBusy = false
+    // Preferred backend. Default "Automatic" → Apple on-device when available
+    // (macOS 27+), else the bundled/local Ollama gemma3:4b.
+    @AppStorage("aiBackend") private var backendRaw = AIBackend.auto.rawValue
+    private var backend: AIBackend { AIBackend(rawValue: backendRaw) ?? .auto }
+    /// The backend that will actually answer, given preference + availability.
+    private var activeBackend: AIBackend {
+        switch backend {
+        case .auto:    return FoundationModelsSuggester.isAvailable ? .appleFM : .ollama
+        case .appleFM: return .appleFM
+        case .ollama:  return .ollama
+        }
+    }
 
     var body: some View {
         Group {
@@ -260,19 +272,58 @@ struct DetailView: View {
                             .background((c < 0.8 ? Color.orange : Color.green).opacity(0.22), in: Capsule())
                     }
                 }
-                if server.bundled {
+                Picker("Engine", selection: $backendRaw) {
+                    ForEach(AIBackend.allCases) { b in
+                        Text(b == .appleFM && !FoundationModelsSuggester.isAvailable
+                             ? b.rawValue + " — unavailable" : b.rawValue).tag(b.rawValue)
+                    }
+                }
+                .pickerStyle(.menu).font(.caption).labelsHidden()
+
+                if activeBackend == .appleFM {
+                    HStack(spacing: 6) {
+                        Image(systemName: "cpu").foregroundStyle(.secondary)
+                        Text(FoundationModelsSuggester.isAvailable
+                             ? FoundationModelsSuggester.modelLabel
+                             : "Apple on-device model \(FoundationModelsSuggester.statusText)")
+                            .font(.caption)
+                            .foregroundStyle(FoundationModelsSuggester.isAvailable ? .green : .orange)
+                    }
+                } else if server.bundled {
                     HStack(spacing: 6) {
                         if server.host == nil { ProgressView().controlSize(.small) }
-                        Text(server.host != nil ? "Local model ready (gemma3:4b)" : "Local model \(server.status)")
-                            .font(.caption).foregroundStyle(server.host != nil ? .green : .secondary)
+                        Text(server.host == nil ? "Local model \(server.status)"
+                             : (server.modelPresent ? "Local model ready (gemma3:4b)"
+                                                    : "gemma3:4b not downloaded"))
+                            .font(.caption)
+                            .foregroundStyle(server.modelPresent ? .green : .secondary)
                     }
                 } else {
                     TextField("Ollama host", text: $ollamaHost)
                         .textFieldStyle(.roundedBorder).font(.caption)
                 }
+
+                // In-app model download for the Ollama path (small build / fallback).
+                if activeBackend == .ollama, !server.modelPresent, effectiveHost != nil {
+                    if let prog = server.downloadProgress {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ProgressView(value: prog)
+                            Text(server.downloadStatus ?? "downloading…")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button {
+                            Task { await server.pull(host: effectiveHost) }
+                        } label: { Label("Download gemma3:4b (~3.3 GB)", systemImage: "arrow.down.circle") }
+                            .font(.caption)
+                        if let s = server.downloadStatus {
+                            Text(s).font(.caption2).foregroundStyle(.orange)
+                        }
+                    }
+                }
                 HStack {
                     Button { runAI() } label: { Label("Suggest deconvolution", systemImage: "wand.and.stars") }
-                        .disabled(aiBusy || file.pattern == nil || effectiveHost == nil)
+                        .disabled(aiBusy || file.pattern == nil || !canSuggest)
                     if aiBusy { ProgressView().controlSize(.small) }
                     Spacer()
                     Button {
@@ -287,9 +338,11 @@ struct DetailView: View {
                         .foregroundStyle((local.aiConfidence ?? 1) < 0.8 ? .orange : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text(server.bundled
-                     ? "Runs a model bundled in the app (gemma3:4b) — no setup, nothing leaves your machine. You confirm the result; DG% is computed locally."
-                     : "Uses a local Ollama model — nothing leaves your machine. You confirm the result; DG% is computed locally.")
+                Text(activeBackend == .appleFM
+                     ? "Runs Apple's on-device model — nothing leaves your machine, no download. You confirm the result; DG% is computed locally."
+                     : (server.bundled
+                        ? "Runs a model bundled in the app (gemma3:4b) — nothing leaves your machine. You confirm the result; DG% is computed locally."
+                        : "Uses a local Ollama model — nothing leaves your machine. You confirm the result; DG% is computed locally."))
                     .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 4)
@@ -302,10 +355,20 @@ struct DetailView: View {
         return ollamaHost.isEmpty ? nil : ollamaHost
     }
 
+    /// Can we run a suggestion right now with the active backend?
+    private var canSuggest: Bool {
+        switch activeBackend {
+        case .appleFM: return FoundationModelsSuggester.isAvailable
+        case .ollama:  return effectiveHost != nil
+        case .auto:    return false   // resolved away by activeBackend
+        }
+    }
+
     private func runAI() {
         guard let p = file.pattern else { return }
         aiBusy = true
         let host = effectiveHost ?? AISuggester.defaultHost
+        let useFM = activeBackend == .appleFM
         // Measure displacement deterministically from a residual phase first; feed
         // the AI calibrated data (more accurate than it guessing displacement).
         let cal = InternalStandard.calibrate(p, phase: "auto")
@@ -313,7 +376,9 @@ struct DetailView: View {
             ? XRDPattern(twoTheta: p.twoTheta.map { $0 - cal.offset }, intensity: p.intensity) : p
         Task {
             do {
-                let (s, feats) = try await AISuggester.suggest(aiPattern, ollamaHost: host)
+                let (s, feats) = useFM
+                    ? try await FoundationModelsSuggester.suggest(aiPattern)
+                    : try await AISuggester.suggest(aiPattern, ollamaHost: host)
                 await MainActor.run {
                     if s.amorphousInvalid {
                         var v = local; v.aiConfidence = s.confidence

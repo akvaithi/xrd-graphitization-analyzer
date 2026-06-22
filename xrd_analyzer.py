@@ -471,6 +471,11 @@ def scan_impurities(two_theta, intensity, *, tol: float = 0.45,
 # index a chosen phase, match its lines to observed peaks, and if they agree on
 # one offset (tight spread) we use that to correct specimen-displacement / zero
 # error -- far more rigorous than anchoring the (002) to a guessed angle.
+# Lattice constants are room-temperature reference values (Å). Sources:
+#   Fe3C     orthorhombic Pnma  — ICDD PDF 00-035-0772, after Fasiska & Jeffrey,
+#            Acta Cryst. 19 (1965) 463–471 (a,b,c here are the Pnma cell).
+#   alpha-Fe cubic Im-3m (bcc)  — ICDD PDF 00-006-0696, a=2.8664 Å at 20 °C.
+#   CaO      cubic Fm-3m (lime) — ICDD PDF 00-037-1497, a=4.8105 Å.
 _CALIB_PHASES = {
     "Fe3C":     {"system": "ortho", "abc": (5.0896, 6.7443, 4.5248), "label": "cementite Fe₃C"},
     "alpha-Fe": {"system": "cubic", "a": 2.8664, "label": "metallic α-Fe"},
