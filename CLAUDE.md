@@ -6,13 +6,17 @@ Guidance for working in this repo.
 Computes **Degree of Graphitization (DG%)** of carbon materials from XRD `.xy`
 scans of the carbon (002) reflection, following the NETL method (OriginLab
 PsdVoigt1 deconvolution → Bragg d-spacings → area-weighted d′ → Maire–Mering).
-Validated against a postdoc's OriginLab gold fits to ~0.9% MAE. Two front-ends
-share one method:
+Validated against a postdoc's OriginLab gold fits to ~0.9% MAE. Two supported
+front-ends share one method:
 
 - **Web / Docker** — `xrd_webgui.py` (stdlib `http.server` + numpy/scipy/matplotlib);
   AI assist uses the **Anthropic Claude API**.
 - **Native macOS app** — `native/` (SwiftUI; the engine ported to pure Swift);
-  AI assist uses a **bundled local Ollama gemma3:4b** (zero setup, offline).
+  AI assist defaults to **Apple's on-device Foundation Model** (macOS 27+), with a
+  local **Ollama gemma3:4b** as fallback (zero setup, offline either way).
+
+> **Platforms:** macOS-native + web only. The Windows build is **deprecated** (not
+> currently maintained); don't add Windows-specific code or release assets.
 
 The Python engine and the Swift engine are kept numerically identical — changes
 to the method must land in both, verified by the parity tests.
@@ -28,9 +32,15 @@ to the method must land in both, verified by the parity tests.
 - `native/Sources/XRDCore/` — Swift engine: `GraphitizationAnalyzer`, `InternalStandard`,
   `ImpurityScan`, `AISuggester` (Ollama), `LevenbergMarquardt`, `PseudoVoigt`.
 - `native/Sources/XRDApp/` — SwiftUI app; `AppModel` holds files + per-file
-  `DeconvSettings`; `DetailView` is the Analyze pane.
-- `native/scripts/make-app.sh` — wrap the binary into the bundled `.app` (copies
-  the Ollama runtime + gemma3:4b + `Resources/AppIcon.icns`; ~3.6 GB).
+  `DeconvSettings`; `DetailView` is the Analyze pane (engine picker: Automatic /
+  Apple on-device / Ollama). `FoundationModelsSuggester` is the Apple on-device
+  backend (gated macOS 27+); `OllamaServer` manages the private Ollama + in-app
+  model download (`pull` streams `/api/pull` into Application Support).
+- `native/scripts/make-app.sh` — wrap the binary into the `.app`. `OLLAMA_BUNDLE`
+  controls the fallback: `full` (runtime+model, ~3.6 GB) / `runtime` (runtime only,
+  ~455 MB, model self-downloads — **default**) / `none` (~5 MB). Auto-selects a full
+  Xcode toolchain (FoundationModels macros need it) and re-stamps the linked SDK to
+  27 via `vtool` (so the app adopts the macOS 26+ Liquid Glass design).
 - `tests/test_engine.py` — pytest regression + Python↔Swift parity suite.
 
 ## Commands
@@ -42,11 +52,13 @@ python3 -m pytest tests/ -q
 # native engine + CLI
 cd native && swift build
 .build/debug/xrd-validate <file.xy> [--peaks 1|2] [--anchor 26.54] [--calib auto]
-# native app bundle
+# native app bundle (lean runtime-only by default; needs a full Xcode toolchain)
 cd native && ./scripts/make-app.sh           # → .build/"XRD Graphitization Analyzer.app"
+OLLAMA_BUNDLE=full ./scripts/make-app.sh     # also bundle gemma3:4b (~3.6 GB)
 ```
 The web `xrd-validate`/Docker need only `requirements.txt`. AI: web reads
-`ANTHROPIC_API_KEY`; desktop bundles the model (or set `OLLAMA_HOST` in dev).
+`ANTHROPIC_API_KEY`; the desktop app uses Apple's on-device model on macOS 27+
+(no setup), else bundled/downloaded gemma3:4b (or set `OLLAMA_HOST` in dev).
 
 ## Conventions / gotchas
 - **Don't commit private data** — `test/`, `*.opj`, `*.xy`, `*.brml`, `math

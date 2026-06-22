@@ -38,7 +38,10 @@ peak heights:
 |---|---|---|
 | **CLI** ([xrd_analyzer.py](xrd_analyzer.py)) | scripting, batch, CI | single file / directory → table, JSON, CSV |
 | **Web app** ([xrd_webgui.py](xrd_webgui.py), Docker) | the lab / a shared server | Analyze · Compare · Stack · Manual; runs on your host |
-| **Native macOS app** ([native/](native/), Swift) | desktop, offline | interactive deconvolution, native charts, pure-Swift engine, bundled local AI |
+| **Native macOS app** ([native/](native/), Swift) | desktop, offline | interactive deconvolution, native charts, pure-Swift engine, on-device AI |
+
+> **Platforms: macOS-native + web.** The Windows desktop build is **deprecated** for
+> now — use the web app (any OS, via Docker/browser) or the native macOS app.
 
 **Validated against the postdoc's OriginLab gold standard** (mean abs error):
 expert hand-placement **0.43%**, AI-assisted **~0.9–1.0%** (Claude / local
@@ -50,8 +53,9 @@ setup from *derived numeric features* (not raw data); the human confirms; DG is
 always computed locally by the deterministic engine. The two builds differ only
 in where inference runs: the **web/Docker app uses the Anthropic Claude API** (so
 the server stays a thin tier — ideal for low-power hosts), while the **native
-desktop app uses a bundled local model** (gemma3:4b) that needs no setup, no key,
-and never leaves the machine. Cu Kα λ = 1.54187 Å throughout.
+desktop app runs on-device** — Apple's built-in Foundation Model (macOS 27+) by
+default, or a local gemma3:4b — so it needs no setup, no key, and never leaves the
+machine. Cu Kα λ = 1.54187 Å throughout.
 
 ---
 
@@ -193,11 +197,11 @@ that can't do local LLM inference. Set `ANTHROPIC_API_KEY` (see
 [compose.ghcr.yml](compose.ghcr.yml)); optional `ANTHROPIC_MODEL`
 (default `claude-opus-4-8`). No key → the button errors cleanly; the rest works.
 
-The **native desktop app** instead uses a **bundled local model** (gemma3:4b) — no
-cloud, no key, nothing leaves the machine (see below). Local-model benchmark
-(8 spectra): gemma3:4b **0.99%**, qwen2.5 / llama3.1 **1.05%**, phi4 **1.08%**,
-gemma3:12b / qwen2.5:14b **1.18%** — *bigger was not better*, so gemma3:4b is the
-bundled default.
+The **native desktop app** instead runs **on-device** — Apple's Foundation Model by
+default (macOS 27+), or a local gemma3:4b fallback — no cloud, no key, nothing
+leaves the machine (see below). Local-model benchmark (8 spectra): gemma3:4b
+**0.99%**, qwen2.5 / llama3.1 **1.05%**, phi4 **1.08%**, gemma3:12b / qwen2.5:14b
+**1.18%** — *bigger was not better*, so gemma3:4b is the local fallback default.
 
 ## Native macOS app ([native/](native/))
 
@@ -221,23 +225,36 @@ cd native && ./scripts/make-app.sh        # → .build/"XRD Graphitization Analy
 open ".build/XRD Graphitization Analyzer.app"
 ```
 
-**AI assist (optional) — bundled, zero setup.** A "Suggest deconvolution" button
-asks **gemma3:4b** to choose the setup — peak count, turbostratic position,
+**AI assist (optional) — on-device, zero setup.** A "Suggest deconvolution" button
+asks an on-device model to choose the setup — peak count, turbostratic position,
 background — which the human then confirms; **DG% is always computed locally** by
-the Swift engine. The model + the Ollama runtime are **bundled inside the .app**:
-on launch it starts a *private* local server (own free port, isolated from any
-system Ollama) and stops it on quit — the user installs nothing, and nothing ever
-leaves the machine. Validated at ~0.99% DG MAE vs the gold standard (beats
-fully-automatic 1.16%; expert 0.43%; bigger local models and Apple Foundation
-Models scored 1.18%). Every (features → suggestion → human-confirmed result)
-triple is logged to `~/Library/Application Support/XRD Graphitization
-Analyzer/decisions.jsonl` for future tuning; low-confidence calls are flagged.
+the Swift engine. An engine picker offers **Automatic / Apple (on-device) / Ollama**:
 
-> **Bundling** happens at build time and makes the `.app` ~3.6 GB:
-> `make-app.sh` copies the Ollama runtime + gemma3:4b from a local install
-> (needs `Ollama.app` + `ollama pull gemma3:4b`; override with `OLLAMA_RES` /
-> `OLLAMA_MODELS_SRC`). The ~3.3 GB assets are **not** in git. Built without them,
-> the app falls back to a system Ollama via the host field.
+- **Apple Foundation Model (default, macOS 27+)** — Apple's built-in on-device
+  model via the `FoundationModels` framework. No download, no server, nothing leaves
+  the machine. Validated at **~0.95% DG MAE** vs the gold standard — on par with
+  gemma3:4b and faster.
+- **Ollama gemma3:4b (fallback)** — for macOS < 27 or Macs without Apple
+  Intelligence. The app runs a *private* local Ollama server (own free port,
+  isolated from any system Ollama) and stops it on quit. If the model isn't bundled,
+  an in-app **Download gemma3:4b** button streams it (~3.3 GB) into Application
+  Support with a progress bar.
+
+Validated MAE vs the postdoc gold: Apple on-device **~0.95%**, gemma3:4b **~0.97–0.99%**
+— both beat fully-automatic (1.16%) and approach the expert hand-fit (0.43%). Every
+(features → suggestion → human-confirmed result) triple is logged to
+`~/Library/Application Support/XRD Graphitization Analyzer/decisions.jsonl` for
+future tuning; low-confidence calls are flagged.
+
+> **Build / bundling** ([make-app.sh](native/scripts/make-app.sh)) — needs a full
+> Xcode toolchain (the FoundationModels macros don't build under bare Command Line
+> Tools). `OLLAMA_BUNDLE` sets how much of the gemma fallback ships:
+> `runtime` (**default**, ~455 MB — runtime only, model downloads on demand) ·
+> `full` (~3.6 GB — also bundles gemma3:4b from a local `Ollama.app` +
+> `ollama pull gemma3:4b`; override with `OLLAMA_RES` / `OLLAMA_MODELS_SRC`) ·
+> `none` (~5 MB — Apple on-device only; gemma needs a system Ollama). The large
+> assets are **not** in git. The script also re-stamps the linked SDK to 27 so the
+> app adopts the macOS 26+ Liquid Glass design.
 
 ## Deploy
 
