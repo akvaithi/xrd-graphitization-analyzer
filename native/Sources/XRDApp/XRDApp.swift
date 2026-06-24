@@ -12,15 +12,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { OllamaServer.shared.stop() }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
+
+    /// Files opened from Finder (double-click / "Open With") arrive here as an
+    /// Apple event, not as argv — forward them to the shared model. `open` filters
+    /// to .xy, so a stray sidecar can't be ingested.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated { AppModel.shared.open(urls) }
+    }
 }
 
 @main
 struct XRDApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @StateObject private var model = AppModel()
+    @StateObject private var model = AppModel.shared
 
     var body: some Scene {
-        WindowGroup {
+        // A single Window (not WindowGroup): Finder "open" events focus this one
+        // window instead of spawning a duplicate per file.
+        Window("XRD Graphitization Analyzer", id: "main") {
             RootView()
                 .environmentObject(model)
                 .environmentObject(OllamaServer.shared)
@@ -33,10 +42,28 @@ struct XRDApp: App {
                 Button("Open .xy…") { model.requestOpen() }
                     .keyboardShortcut("o", modifiers: .command)
             }
+            CommandMenu("Analyze") {
+                Button("AI Suggest All") {
+                    Task { await model.suggestAllAI(AIConfig.current(server: OllamaServer.shared)) }
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(model.batchBusy || model.files.isEmpty
+                          || !AIConfig.current(server: OllamaServer.shared).canSuggest)
+                Button("Export All…") { model.requestExportAll = true }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                    .disabled(model.batchBusy || model.files.isEmpty)
+            }
             CommandGroup(replacing: .appInfo) {
                 Button("About XRD Graphitization Analyzer") { showAboutPanel() }
             }
             CommandGroup(replacing: .help) { HelpMenu() }
+        }
+
+        // Standard Settings window (⌘,) — AI engine, scan QC, export options.
+        Settings {
+            SettingsView()
+                .environmentObject(model)
+                .environmentObject(OllamaServer.shared)
         }
 
         // Dedicated Help window (opened from the Help menu).

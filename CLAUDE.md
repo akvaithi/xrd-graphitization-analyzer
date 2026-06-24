@@ -15,8 +15,10 @@ front-ends share one method:
   AI assist defaults to **Apple's on-device Foundation Model** (macOS 27+), with a
   local **Ollama gemma3:4b** as fallback (zero setup, offline either way).
 
-> **Platforms:** macOS-native + web only. The Windows build is **deprecated** (not
-> currently maintained); don't add Windows-specific code or release assets.
+> **Platforms:** macOS-native + web are the shipping front-ends. A **native Windows
+> app is coming soon** (planned: shared Swift `XRDCore` engine + a WinUI/SwiftCrossUI
+> front-end, with Phi Silica as the on-device AI). Until then don't add ad-hoc
+> Windows code or release a Windows build.
 
 The Python engine and the Swift engine are kept numerically identical — changes
 to the method must land in both, verified by the parity tests.
@@ -31,11 +33,25 @@ to the method must land in both, verified by the parity tests.
 - `run_parser.py` — parse synthesis parameters from filenames.
 - `native/Sources/XRDCore/` — Swift engine: `GraphitizationAnalyzer`, `InternalStandard`,
   `ImpurityScan`, `AISuggester` (Ollama), `LevenbergMarquardt`, `PseudoVoigt`.
-- `native/Sources/XRDApp/` — SwiftUI app; `AppModel` holds files + per-file
-  `DeconvSettings`; `DetailView` is the Analyze pane (engine picker: Automatic /
-  Apple on-device / Ollama). `FoundationModelsSuggester` is the Apple on-device
-  backend (gated macOS 27+); `OllamaServer` manages the private Ollama + in-app
-  model download (`pull` streams `/api/pull` into Application Support).
+- `native/Sources/XRDApp/` — SwiftUI app. `AppModel` (a shared singleton) holds
+  files + per-file `DeconvSettings` + the current `results`; `DetailView` is the
+  Analyze pane. AI engine selection lives in `SettingsView` (⌘,). Supporting types:
+  - `FitRunner` — the one `DeconvSettings → FitOptions → DGResult` pipeline (used by
+    the live pane and the model-level recompute), so all surfaces show one number.
+  - `AnalysisStore` — per-file **sidecar** `MyScan.xy.xrda.json` (settings, result
+    snapshot, applied shift, redo flag, history). Auto-loads on open; the raw `.xy`
+    is never modified. **Tolerant decoder** — old/missing keys fall back to defaults.
+  - `AISuggestionService` + `AIConfig` — shared suggester (calibration pre-fit +
+    suggestion→settings); `FoundationModelsSuggester` is the Apple on-device backend
+    (gated macOS 27+); `AISuggester` (XRDCore) is the Ollama path.
+  - `OllamaServer` — private bundled Ollama + in-app model download (`pull`).
+  - `ReportBuilder` (CSV), `ExportPreviewView` + `ExportChart`/`ChartOptions` (WYSIWYG
+    PNG preview: title/subtitle, components, per-field params box, text scale).
+  - Batch: `AppModel.suggestAllAI` / `exportAll`; the app is the **default `.xy`
+    handler** (Finder open → `AppDelegate.application(_:open:)`).
+  - **Persistence gotcha:** only persist the sidecar on a *genuine* user edit
+    (`settingsLoaded` gate); never on a programmatic load, or a transient default
+    clobbers saved settings.
 - `native/scripts/make-app.sh` — wrap the binary into the `.app`. `OLLAMA_BUNDLE`
   controls the fallback: `full` (runtime+model, ~3.6 GB) / `runtime` (runtime only,
   ~455 MB, model self-downloads — **default**) / `none` (~5 MB). Auto-selects a full

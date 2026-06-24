@@ -28,7 +28,7 @@ struct CompareView: View {
 
     private struct P: Identifiable { let id = UUID(); let x: Double; let y: Double; let group: String }
 
-    private var valid: [LoadedFile] { model.files.filter { $0.autoResult != nil && $0.info != nil } }
+    private var valid: [LoadedFile] { model.files.filter { model.currentResult($0) != nil && $0.info != nil } }
 
     var body: some View {
         if valid.isEmpty {
@@ -41,7 +41,9 @@ struct CompareView: View {
                     Picker("X", selection: $xm) { ForEach(XMetric.allCases) { Text($0.rawValue).tag($0) } }
                     Picker("Color", selection: $grp) { ForEach(Grouping.allCases) { Text($0.rawValue).tag($0) } }
                     Spacer()
-                    Button { saveChartPNG(chart, suggestedName: "xrd_\(ym.rawValue)_vs_\(xm.rawValue)") }
+                    Button { saveChartPNG(chart, suggestedName: "xrd_\(ym.rawValue)_vs_\(xm.rawValue)",
+                                          title: "\(ym.rawValue) vs \(xm.rawValue)",
+                                          subtitle: "\(valid.count - excluded.count) runs · coloured by \(grp.rawValue)") }
                         label: { Label("Chart", systemImage: "photo") }
                     Button { exportCSV() } label: { Label("CSV", systemImage: "square.and.arrow.down") }
                 }
@@ -94,7 +96,7 @@ struct CompareView: View {
                         set: { on in if on { excluded.remove(f.id) } else { excluded.insert(f.id) } })) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(f.displayName).font(.system(size: 11)).lineLimit(2)
-                            Text(f.dgText).font(.system(size: 10)).foregroundStyle(.secondary)
+                            Text(model.dgText(for: f)).font(.system(size: 10)).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -138,7 +140,7 @@ struct CompareView: View {
         }
     }
     private func yval(_ f: LoadedFile) -> Double? {
-        guard let r = f.autoResult else { return nil }
+        guard let r = model.currentResult(f) else { return nil }
         switch ym {
         case .dg: return r.dgPercent
         case .lc: return r.crystalliteLc
@@ -165,7 +167,7 @@ struct CompareView: View {
         func q(_ s: String) -> String { s.contains(",") ? "\"\(s)\"" : s }
         var out = "file,carbon_type,carbon_ratio,fe_ratio,caco3_ratio,temperature_C,time_h,form,wash,DG,Lc,d_prime,graphitic_xc\n"
         for f in valid {
-            let i = f.info, r = f.autoResult
+            let i = f.info, r = model.currentResult(f)
             out += [q(f.url.lastPathComponent), i?.carbonType ?? "", n(i?.carbonRatio), n(i?.feRatio),
                     n(i?.caco3Ratio), i?.temperatureC.map(String.init) ?? "", n(i?.timeH),
                     i?.form ?? "", i?.wash ?? "",
