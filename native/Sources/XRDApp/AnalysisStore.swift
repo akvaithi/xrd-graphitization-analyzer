@@ -54,6 +54,7 @@ struct AnalysisRecord: Codable {
     var shiftOffset: Double?          // applied 2θ displacement, if any
     var flaggedForRedo = false        // user marked this scan for re-running
     var history: [HistoryEntry] = []
+    var yieldInputs: YieldInputs?     // optional weighed masses for the Yield tab
     var updatedAt = Date()
     var appVersion: String?
 }
@@ -61,7 +62,7 @@ struct AnalysisRecord: Codable {
 extension AnalysisRecord {
     enum CodingKeys: String, CodingKey {
         case schemaVersion, sourceFileName, settings, result, shiftOffset
-        case flaggedForRedo, history, updatedAt, appVersion
+        case flaggedForRedo, history, yieldInputs, updatedAt, appVersion
     }
     /// Tolerant decoder so sidecars written by older builds still load — missing
     /// keys (e.g. `flaggedForRedo`, added later) fall back to defaults instead of
@@ -75,6 +76,7 @@ extension AnalysisRecord {
         shiftOffset = try? c.decode(Double.self, forKey: .shiftOffset)
         flaggedForRedo = (try? c.decode(Bool.self, forKey: .flaggedForRedo)) ?? false
         history = (try? c.decode([HistoryEntry].self, forKey: .history)) ?? []
+        yieldInputs = try? c.decode(YieldInputs.self, forKey: .yieldInputs)
         updatedAt = (try? c.decode(Date.self, forKey: .updatedAt)) ?? Date()
         appVersion = try? c.decode(String.self, forKey: .appVersion)
     }
@@ -133,6 +135,17 @@ enum AnalysisStore {
         rec.result = result.map(DGSnapshot.init)
         rec.shiftOffset = result.flatMap { $0.twoThetaOffset != 0 ? $0.twoThetaOffset : nil }
         if let f = flaggedForRedo { rec.flaggedForRedo = f }   // nil = preserve existing
+        rec.updatedAt = Date()
+        rec.appVersion = appVersion
+        return save(rec, for: url)
+    }
+
+    /// Persist just the yield masses (leaves settings/result/history intact).
+    @discardableResult
+    static func saveYield(for url: URL, yield: YieldInputs) -> Bool {
+        var rec = load(for: url) ?? AnalysisRecord(sourceFileName: url.lastPathComponent,
+                                                   settings: DeconvSettings())
+        rec.yieldInputs = yield
         rec.updatedAt = Date()
         rec.appVersion = appVersion
         return save(rec, for: url)

@@ -8,6 +8,7 @@ import XRDCore
 struct ExportPreviewView: View {
     let result: DGResult
     let displayName: String
+    var crystallinity: CrystallinityResult? = nil
 
     @Environment(\.dismiss) private var dismiss
     @AppStorage("pngTitle") private var pngTitle = true
@@ -20,8 +21,9 @@ struct ExportPreviewView: View {
     @State private var options = ChartOptions()
 
     private var subtitleText: String {
-        String(format: "DG %.2f%% · (002) fit · %@", result.dgPercent,
-                Date().formatted(date: .abbreviated, time: .omitted))
+        let cryst = crystallinity.map { String(format: " · cryst %.0f%%", $0.crystallineFraction * 100) } ?? ""
+        return String(format: "DG %.2f%%%@ · (002) fit · %@", result.dgPercent, cryst,
+                      Date().formatted(date: .abbreviated, time: .omitted))
     }
 
     var body: some View {

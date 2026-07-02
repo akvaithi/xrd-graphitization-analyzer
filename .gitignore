@@ -2,6 +2,16 @@
 *.xy
 *.brml
 
+# Proprietary research data & results — PUBLIC repo, keep out.
+# (Inline comments are NOT allowed in .gitignore — keep patterns on their own line.)
+DATA/
+# plots/tables derived from proprietary scans
+research/figures/
+# yield spreadsheets, papers, analysis sidecars (contain real results/masses)
+*.xlsx
+*.pdf
+*.xrda.json
+
 # Python
 __pycache__/
 *.py[cod]

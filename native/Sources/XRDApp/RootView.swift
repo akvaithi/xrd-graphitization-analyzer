@@ -24,6 +24,7 @@ struct RootView: View {
             CompareView().tabItem { Label("Compare", systemImage: "chart.dots.scatter") }.tag(1)
             StackView().tabItem { Label("Stack spectra", systemImage: "square.stack.3d.up") }.tag(2)
             ManualView().tabItem { Label("Manual calc", systemImage: "function") }.tag(3)
+            YieldView().tabItem { Label("Yield", systemImage: "scalemass") }.tag(4)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {

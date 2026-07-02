@@ -787,6 +787,83 @@ def dg_range(two_theta, intensity, *, turbostratic_low: float = 26.10,
 
 
 # ---------------------------------------------------------------------------
+# Crystallinity — amorphous-aware (002) decomposition (AMOUNT of crystalline C)
+# ---------------------------------------------------------------------------
+# DG% (above) measures ordering *quality* (d-spacing); it is blind to how much
+# carbon is amorphous, because amorphous carbon scatters diffusely with no sharp
+# peak. This decomposes the (002) region into a sharp crystalline peak + a broad
+# disordered band (amorphous + turbostratic halo) and reports the integrated-area
+# crystallinity index. It is the canonical engine implementation mirrored by the
+# Swift core (XRDCore/Crystallinity.swift) and verified by a parity test; the
+# research/ scripts and the web GUI both read it, so all front-ends show one value.
+#
+# IMPORTANT: a model-dependent *index* (sharp ÷ total 002 scattering), NOT a weight
+# percent — amorphous and crystalline carbon do not scatter equally per gram, so
+# convert to absolute wt% only via a physical-standard calibration. Sources:
+# Warren (1941); Franklin (1951); Iwashita Carbon 42 (2004); Lu Carbon 39 (2001);
+# Ruland & Smarsly J. Appl. Cryst. 35 (2002).
+CRYSTALLINITY_WINDOW: tuple[float, float] = (16.0, 31.0)
+
+
+def crystallinity(two_theta, intensity, *, wavelength: float = DEFAULT_WAVELENGTH,
+                  window: tuple[float, float] = CRYSTALLINITY_WINDOW) -> dict:
+    """Fit a broad disordered band + a sharp graphitic (002) peak on a
+    deterministically baseline-subtracted window; return the crystalline fraction.
+
+    The deterministic edge-baseline subtraction (not a free background) is what
+    keeps this numerically in lockstep with the Swift port — a free background
+    would let two optimizers split the area differently.
+    """
+    tt = np.asarray(two_theta, float)
+    inten = np.asarray(intensity, float)
+    o = np.argsort(tt)
+    tt, inten = tt[o], inten[o]
+    mask = (tt >= window[0]) & (tt <= window[1])
+    x, y = tt[mask], inten[mask]
+    if len(x) < 12:
+        raise FitError(f"only {len(x)} point(s) in {window}° — too few to decompose.")
+
+    # edge-baseline subtraction (matches XRDPattern.baseline_subtracted / Swift)
+    n_edge = max(3, len(x) // 20)
+    xl, yl = x[:n_edge].mean(), y[:n_edge].mean()
+    xr, yr = x[-n_edge:].mean(), y[-n_edge:].mean()
+    slope = (yr - yl) / (xr - xl) if xr != xl else 0.0
+    y = np.clip(y - (yl + slope * (x - xl)), 0.0, None)
+    ph = float(y.max())
+
+    # model: broad disordered PV + sharp graphitic PV (no free background)
+    def model(xx, A_d, xc_d, w_d, mu_d, A_g, xc_g, w_g, mu_g):
+        return pseudo_voigt(xx, A_d, xc_d, w_d, mu_d) + pseudo_voigt(xx, A_g, xc_g, w_g, mu_g)
+
+    p0 = [ph * 0.4 * 3.0, 25.5, 3.0, 0.5, ph * 0.8 * 0.3, 26.5, 0.3, 0.6]
+    lo = [0.0, 22.0, 1.5, 0.0, 0.0, 26.2, 0.05, 0.0]
+    hi = [np.inf, 26.3, 12.0, 1.0, np.inf, 26.9, 0.8, 1.0]
+    popt = GraphitizationAnalyzer._fit(model, x, y, p0, (lo, hi), "crystallinity decomposition")
+    A_d, xc_d, w_d, mu_d, A_g, xc_g, w_g, mu_g = popt
+
+    yfit = model(x, *popt)
+    ss_res = float(np.sum((y - yfit) ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+    A_d, A_g = float(A_d), float(A_g)
+    total = (A_d + A_g) or 1.0
+    d_g = wavelength / (2.0 * np.sin(np.deg2rad(float(xc_g) / 2.0)))
+    return {
+        "crystalline_fraction": round(A_g / total, 4),   # sharp ÷ total 002 scattering
+        "disordered_fraction": round(A_d / total, 4),     # amorphous + turbostratic
+        "sharp_area": round(A_g, 4),
+        "broad_area": round(A_d, 4),
+        "graphitic_xc": round(float(xc_g), 4),
+        "graphitic_w": round(float(w_g), 4),
+        "d_graphitic_angstrom": round(float(d_g), 6),
+        "fit_r2": round(r2, 5),
+        "window_deg": list(window),
+        "is_absolute_wt_pct": False,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Batch processing
 # ---------------------------------------------------------------------------
 

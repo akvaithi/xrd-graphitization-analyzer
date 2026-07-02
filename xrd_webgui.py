@@ -50,6 +50,7 @@ from xrd_analyzer import (
     GraphitizationAnalyzer,
     XRDPattern,
     calibrate_internal_standard,
+    crystallinity,
     dg_from_peaks,
     dg_range,
     fit_netl,
@@ -57,6 +58,15 @@ from xrd_analyzer import (
     scan_impurities,
 )
 from run_parser import parse_run_filename
+
+
+def _crystallinity_safe(pattern: XRDPattern) -> dict | None:
+    """Crystallinity (AMOUNT of crystalline carbon) — the companion to DG%
+    (ordering quality). Never blocks the DG fit; returns None if it can't run."""
+    try:
+        return crystallinity(pattern.two_theta, pattern.intensity)
+    except Exception:  # noqa: BLE001
+        return None
 
 # ---------------------------------------------------------------------------
 # Request limits (env-overridable) — basic abuse / DoS protection
@@ -130,8 +140,11 @@ def render_plot(pattern: XRDPattern, res: dict, theme: str = "dark") -> str:
     ax.grid(True, color=pal["grid"], lw=0.6)
     ax.set_xlabel("2θ  (degrees)", color=pal["muted"], fontsize=FS_LABEL)
     ax.set_ylabel("Intensity  (a.u.)", color=pal["muted"], fontsize=FS_LABEL)
-    ax.set_title(f"Carbon (002) fit — DG {res['DG_percent']:.1f}%",
-                 color=pal["text"], fontsize=FS_TITLE, pad=8)
+    _title = f"Carbon (002) fit — DG {res['DG_percent']:.1f}%"
+    cr = res.get("crystallinity")
+    if cr:
+        _title += f"  ·  crystallinity {cr['crystalline_fraction'] * 100:.0f}%"
+    ax.set_title(_title, color=pal["text"], fontsize=FS_TITLE, pad=8)
     ax.legend(fontsize=FS_LEGEND, facecolor=pal["face"], edgecolor=pal["muted"],
               labelcolor=pal["text"], framealpha=0.9)
     fig.tight_layout(pad=1.3)
@@ -176,8 +189,11 @@ def render_plot_netl(pattern: XRDPattern, res: dict, theme: str = "dark") -> str
     ax.grid(True, color=pal["grid"], lw=0.6)
     ax.set_xlabel("2θ  (degrees)", color=pal["muted"], fontsize=FS_LABEL)
     ax.set_ylabel("Intensity  (a.u.)", color=pal["muted"], fontsize=FS_LABEL)
-    ax.set_title(f"Carbon (002) fit — DG {res['DG_percent']:.1f}%",
-                 color=pal["text"], fontsize=FS_TITLE, pad=8)
+    _title = f"Carbon (002) fit — DG {res['DG_percent']:.1f}%"
+    cr = res.get("crystallinity")
+    if cr:
+        _title += f"  ·  crystallinity {cr['crystalline_fraction'] * 100:.0f}%"
+    ax.set_title(_title, color=pal["text"], fontsize=FS_TITLE, pad=8)
     ax.legend(fontsize=FS_LEGEND, facecolor=pal["face"], edgecolor=pal["muted"],
               labelcolor=pal["text"], framealpha=0.9)
     fig.tight_layout(pad=1.3)
@@ -210,6 +226,11 @@ def render_report_pdf(res: dict, *, sample: str, sub: str = "",
     if rng:
         fig.text(0.06, 0.865, f"Range {rng['low']:.1f}–{rng['high']:.1f}% across deconvolution "
                  f"choices ({', '.join(f'{k} {v:.1f}' for k,v in rng['by_method'].items())})",
+                 fontsize=8.5, color="#555")
+    cr = res.get("crystallinity")
+    if cr:
+        fig.text(0.06, 0.848, f"Crystallinity (amount): {cr['crystalline_fraction']*100:.1f}%  ·  "
+                 f"disordered {cr['disordered_fraction']*100:.1f}%  ·  XRD index (sharp ÷ total 002), not wt%",
                  fontsize=8.5, color="#555")
 
     # --- fit plot ---
@@ -277,6 +298,7 @@ X_LABELS = {
 }
 Y_LABELS = {
     "DG":            "Degree of Graphitization (%)",
+    "crystallinity": "Crystallinity (amount, %)",
     "Lc":            "Crystallite height Lc (Å)",
     "d_prime":       "d′ weighted (Å)",
     "graphitic_xc":  "Graphitic (002) 2θ (°)",
@@ -304,15 +326,19 @@ def build_dashboard_rows(files: list[dict]) -> list[dict]:
         name = f.get("name", "")
         row = parse_run_filename(name)
         row["file"] = name
-        for k in ("DG", "Lc", "d_prime", "graphitic_xc", "turbostratic_xc"):
+        for k in ("DG", "Lc", "d_prime", "graphitic_xc", "turbostratic_xc", "crystallinity"):
             row[k] = None
         try:
-            res = GraphitizationAnalyzer(XRDPattern.from_text(f.get("xy", ""))).run()
+            pat = XRDPattern.from_text(f.get("xy", ""))
+            res = GraphitizationAnalyzer(pat).run()
             row["DG"] = res["DG_percent"]
             row["Lc"] = res["crystallite_height_Lc_angstrom"]
             row["d_prime"] = res["d_spacing_weighted_angstrom"]
             row["graphitic_xc"] = res["graphitic"]["xc"]
             row["turbostratic_xc"] = res["turbostratic"]["xc"]
+            c = _crystallinity_safe(pat)              # AMOUNT, alongside DG%
+            if c is not None:
+                row["crystallinity"] = round(c["crystalline_fraction"] * 100, 1)
         except (FitError, ValueError) as exc:
             row["error"] = str(exc)
         rows.append(row)
@@ -810,8 +836,8 @@ PAGE_HTML = """<!DOCTYPE html>
 <script>
 const X = {temperature_C:"Temperature (°C)", caco3_ratio:"CaCO₃ ratio", time_h:"Dwell time (h)",
            fe_ratio:"Fe ratio", carbon_ratio:"Carbon ratio"};
-const Y = {DG:"DG%", Lc:"Crystallite Lc (Å)", d_prime:"d′ weighted (Å)",
-           graphitic_xc:"Graphitic 2θ (°)"};
+const Y = {DG:"DG%", crystallinity:"Crystallinity (amount %)", Lc:"Crystallite Lc (Å)",
+           d_prime:"d′ weighted (Å)", graphitic_xc:"Graphitic 2θ (°)"};
 const G = {carbon_type:"Carbon type", form:"Sample form", wash:"Wash state", none:"(none)"};
 
 const $ = id => document.getElementById(id);
@@ -888,7 +914,7 @@ function buildFileSel(){
   aiBar.style.display = files.length?'flex':'none';
   manualBar.style.display = files.length?'flex':'none';
   fileSel.innerHTML = rows.map((r,i)=>{
-    const tag = r.error?'ERROR':(r.DG!=null?`DG ${r.DG.toFixed(2)}%`:'—');
+    const tag = r.error?'ERROR':(r.DG!=null?`DG ${r.DG.toFixed(2)}%`+(r.crystallinity!=null?` · cryst ${r.crystallinity.toFixed(0)}%`:''):'—');
     return `<option value="${i}">${i+1}/${rows.length}  ${r.label||r.file}  —  ${tag}</option>`;
   }).join('');
 }
@@ -931,6 +957,19 @@ async function runAISuggest(i){
   }catch(err){ setStatus('AI request failed: '+err,true); }
   finally{ aiBtn.disabled=false; }
 }
+// Crystallinity card — AMOUNT of crystalline carbon, the companion to DG%
+// (ordering quality). Mirrors the macOS app's Analyze pane.
+function crystBox(c, dg){
+  if(!c) return '';
+  const cp=(c.crystalline_fraction*100).toFixed(1), dp=(c.disordered_fraction*100).toFixed(1);
+  const warn=(dg!=null && dg>=90 && c.crystalline_fraction<0.85)
+    ? `<div class="cap" style="color:#e0a030">⚠︎ High DG% but a notable disordered fraction remains — ordering is good, the amount of crystalline carbon is not yet complete.</div>` : '';
+  return `<div class="dgbox"><div class="cap">Crystallinity (amount)</div>`+
+    `<div class="dg" style="font-size:1.5rem">${cp} %</div>`+
+    `<div class="cap">crystalline graphite ${cp}% · disordered (amorphous + turbostratic) ${dp}% · R² ${c.fit_r2.toFixed(4)}</div>`+
+    warn+
+    `<div class="cap">XRD index: sharp (002) ÷ total (002) scattering, 16–31° window. Relative, not wt% — calibrate against standards for an absolute figure.</div></div>`;
+}
 function renderResultsNetl(d, title, sub, s, q){
   const pct=x=>(x*100).toFixed(2)+'%';
   const sig = (d.DG_sigma!=null) ? `<div class="dgsig">± ${d.DG_sigma.toFixed(2)}%</div>` : '';
@@ -938,6 +977,7 @@ function renderResultsNetl(d, title, sub, s, q){
   let h=fileHead(title,sub)+
     `<div class="dgbox dgtop"><div class="cap">Degree of Graphitization</div>`+
     `<div class="dg">${d.DG_percent.toFixed(2)} %</div>${sig}<div class="cap">${d.method_name}</div>${rng}</div>`+
+    crystBox(d.crystallinity, d.DG_percent)+
     qualityBanner(q)+
     `<div class="section">Graphitic peak</div>`+
     row('2θ centre',d.graphitic.xc.toFixed(4),'°')+row('FWHM',d.graphitic.w.toFixed(4),'°')+
@@ -1159,7 +1199,7 @@ async function drawCompare(){
 function tcell(v,dig){ if(v===null||v===undefined||v==='') return '<td class="miss">–</td>';
   return `<td>${typeof v==='number'?v.toFixed(dig):v}</td>`; }
 function renderTable(){
-  const head=['Type','C','Fe','CaCO₃','T(°C)','t(h)','Form','Wash','DG%','Lc(Å)'];
+  const head=['Type','C','Fe','CaCO₃','T(°C)','t(h)','Form','Wash','DG%','Cryst%','Lc(Å)'];
   let h='<table><thead><tr><th class="ck-col"><input type="checkbox" id="rowAll" checked></th>'+
         '<th class="lbl">Run</th>'+head.map(x=>`<th>${x}</th>`).join('')+'</tr></thead><tbody>';
   rows.forEach((r,i)=>{
@@ -1168,7 +1208,7 @@ function renderTable(){
        `<td class="lbl"><a class="runlink" data-i="${i}" title="${r.file}">${r.label||r.file}</a></td>`+
        tcell(r.carbon_type)+tcell(r.carbon_ratio,0)+tcell(r.fe_ratio,0)+tcell(r.caco3_ratio,4)+
        tcell(r.temperature_C,0)+tcell(r.time_h,0)+tcell(r.form)+tcell(r.wash)+
-       tcell(r.DG,2)+tcell(r.Lc,1)+'</tr>';
+       tcell(r.DG,2)+tcell(r.crystallinity,1)+tcell(r.Lc,1)+'</tr>';
   });
   tablewrap.innerHTML=h+'</tbody></table>';
 }
@@ -1193,7 +1233,7 @@ csvBtn.addEventListener('click',downloadCSV);
 function downloadCSV(){
   if(!rows.length) return;
   const cols=['file','carbon_type','carbon_ratio','fe_ratio','caco3_ratio',
-    'temperature_C','time_h','form','wash','date','DG','Lc',
+    'temperature_C','time_h','form','wash','date','DG','crystallinity','Lc',
     'd_prime','graphitic_xc','turbostratic_xc','error'];
   const esc=v=>{ if(v===null||v===undefined) return '';
     const s=String(v); return /[",\\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
@@ -1360,6 +1400,7 @@ class Handler(BaseHTTPRequestHandler):
         pattern = XRDPattern.from_text(payload.get("xy", ""))
         try:
             res = GraphitizationAnalyzer(pattern).run()
+            res["crystallinity"] = _crystallinity_safe(pattern)   # before plot → annotated
             res["plot_png"] = render_plot(pattern, res, payload.get("theme", "dark"))
         except (FitError, ValueError) as exc:
             res = {"error": str(exc)}
@@ -1367,6 +1408,7 @@ class Handler(BaseHTTPRequestHandler):
             res["quality"] = scan_impurities(pattern.two_theta, pattern.intensity)
         except Exception:  # noqa: BLE001
             pass
+        res.setdefault("crystallinity", _crystallinity_safe(pattern))   # also on fit failure
         self._send(200, "application/json", json.dumps(res).encode("utf-8"))
 
     def _handle_calc_peaks(self) -> None:
@@ -1399,6 +1441,7 @@ class Handler(BaseHTTPRequestHandler):
                            subtract_background=bool(payload.get("subtract_background")),
                            anchor_002=float(anchor) if anchor not in (None, "") else None,
                            two_theta_offset=offset)
+            res["crystallinity"] = _crystallinity_safe(pattern)   # before plot → annotated
             res["plot_png"] = render_plot_netl(pattern, res, payload.get("theme", "dark"))
             try:
                 res["dg_range"] = dg_range(pattern.two_theta, pattern.intensity,
@@ -1448,6 +1491,7 @@ class Handler(BaseHTTPRequestHandler):
             quality = scan_impurities(pattern.two_theta, pattern.intensity)
         except Exception:  # noqa: BLE001
             pass
+        res["crystallinity"] = _crystallinity_safe(pattern)   # AMOUNT, alongside DG%
         pdf = render_report_pdf(res, sample=payload.get("sample", "XRD sample"),
                                 sub=payload.get("file", ""), quality=quality, calibration=cal)
         self._send(200, "application/json",

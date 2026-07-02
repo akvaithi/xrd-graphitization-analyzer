@@ -42,10 +42,28 @@ if args[1] == "--ai", args.count >= 3 {
     }
 }
 
-// Optional flags: --turbo <xc> (lock turbostratic), --peaks <1|2>
+// --yield-selftest : synthetic demo through YieldCalc → JSON (Python↔Swift parity).
+if args[1] == "--yield-selftest" {
+    let y = YieldCalc.compute(gpcMass: 2.0, cWt: 0.90, sWt: 0.05,
+                              feMass: 4.0, caco3Mass: 0.6,
+                              postFurnace: 5.8, postAcid: 1.9, pellet: 6.6,
+                              crystallineFraction: 0.90)
+    let out: [String: Double] = [
+        "mass_yield": y.massYield,
+        "graphite_theoretical": y.graphiteTheoretical,
+        "trapped_metal": y.trappedMetal ?? -1,
+        "crystalline_graphite_yield": y.crystallineGraphiteYield ?? -1,
+    ]
+    print(String(decoding: try JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]), as: UTF8.self))
+    exit(0)
+}
+
+// Optional flags: --turbo <xc> (lock turbostratic), --peaks <1|2>,
+// --crystallinity (amorphous-aware decomposition → crystalline fraction).
 var opt = FitOptions()
 var path: String? = nil
 var calibPhase: String? = nil
+var crystallinity = false
 var i = 1
 while i < args.count {
     switch args[i] {
@@ -53,12 +71,25 @@ while i < args.count {
     case "--peaks": opt.peakCount = Int(args[i + 1]) ?? 2; i += 2
     case "--anchor": opt.anchor002 = Double(args[i + 1]); i += 2
     case "--calib": calibPhase = args[i + 1]; i += 2
+    case "--crystallinity": crystallinity = true; i += 1
     default: path = args[i]; i += 1
     }
 }
 
 do {
     let pattern = try XRDPattern.parse(contentsOf: URL(fileURLWithPath: path ?? args[1]))
+    if crystallinity {
+        let c = try CrystallinityAnalyzer.analyze(pattern)
+        let out: [String: Double] = [
+            "crystalline_fraction": c.crystallineFraction,
+            "disordered_fraction": c.disorderedFraction,
+            "graphitic_xc": c.graphiticCenter,
+            "graphitic_fwhm": c.graphiticFWHM,
+            "fit_r2": c.fitR2,
+        ]
+        print(String(decoding: try JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]), as: UTF8.self))
+        exit(0)
+    }
     if let ph = calibPhase {
         let c = InternalStandard.calibrate(pattern, phase: ph)
         let ms = c.matches.map { String(format: "%.3f→%.3f(%+.3f)", $0.line, $0.observed, $0.delta) }.joined(separator: " ")

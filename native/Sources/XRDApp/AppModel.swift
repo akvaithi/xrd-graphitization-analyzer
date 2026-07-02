@@ -13,6 +13,10 @@ struct LoadedFile: Identifiable {
     let parseError: String?
     let info: RunInfo?
     let autoResult: DGResult?
+    // Amorphous-aware crystallinity (AMOUNT of crystalline carbon) — computed once
+    // from the raw pattern at open; independent of the deconvolution settings, so
+    // it's a fixed per-file property both Analyze and Compare read.
+    let crystallinity: CrystallinityResult?
 
     var dgText: String {
         if pattern == nil { return "—" }
@@ -36,6 +40,18 @@ struct DeconvSettings: Equatable, Codable {
     var aiConfidence: Double? = nil
 }
 
+/// The three weighed masses for a run's yield — persisted in the scan's sidecar,
+/// so entering them once tracks with the file. The recipe ratios (GPC / Fe / CaCO₃)
+/// and feed composition are pulled from the *filename*; the pellet mass scales
+/// those ratios to actual charged masses (pellet = GPC + Fe + CaCO₃). 0 = not entered.
+struct YieldInputs: Codable, Equatable {
+    var pellet = 0.0         // REQUIRED — total charged mass; scales the recipe ratios
+    var postFurnace = 0.0    // REQUIRED — pre-wash mass; the yield basis
+    var postAcid = 0.0       // optional — enables the wash-completeness QC
+
+    var isComputable: Bool { pellet > 0 && postFurnace > 0 }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     /// Shared instance so the AppDelegate (Finder "open" events) and the SwiftUI
@@ -51,6 +67,8 @@ final class AppModel: ObservableObject {
     @Published var results: [LoadedFile.ID: DGResult] = [:]
     /// User-set "re-scan this sample" flags (persisted in the sidecar).
     @Published var redoFlags: [LoadedFile.ID: Bool] = [:]
+    /// Per-file weighed masses for the (optional) Yield tab, persisted in the sidecar.
+    @Published var yieldInputs: [LoadedFile.ID: YieldInputs] = [:]
 
     // Batch-operation progress (AI Suggest all / Export all).
     @Published var batchBusy = false
@@ -77,6 +95,41 @@ final class AppModel: ObservableObject {
         if let r = currentResult(file) { return String(format: "%.2f%%", r.dgPercent) }
         return "fit failed"
     }
+
+    // MARK: - Yield (optional)
+
+    /// Actual charged masses, back-derived from the filename recipe ratios scaled
+    /// to the measured pellet mass (pellet = GPC + Fe + CaCO₃). nil if the pellet
+    /// isn't entered or the name lacks the carbon/Fe ratios.
+    func derivedMasses(for file: LoadedFile)
+        -> (gpc: Double, fe: Double, caco3: Double, grade: String?)? {
+        guard let yi = yieldInputs[file.id], yi.pellet > 0, let info = file.info,
+              let cr = info.carbonRatio, cr > 0, let fr = info.feRatio else { return nil }
+        let car = info.caco3Ratio ?? 0
+        let sum = cr + fr + car
+        guard sum > 0 else { return nil }
+        return (yi.pellet * cr / sum, yi.pellet * fr / sum, yi.pellet * car / sum, info.carbonType)
+    }
+
+    /// The yield result for a file, if its masses have been entered. Recipe + feed
+    /// composition come from the filename; combines with the file's crystallinity
+    /// (amount) → crystalline-graphite yield.
+    func yieldResult(for file: LoadedFile) -> YieldResult? {
+        guard let yi = yieldInputs[file.id], yi.isComputable,
+              let m = derivedMasses(for: file) else { return nil }
+        let comp = YieldCalc.defaultComposition(grade: m.grade)
+        return YieldCalc.compute(
+            gpcMass: m.gpc, cWt: comp.cWt, sWt: comp.sWt, feMass: m.fe,
+            caco3Mass: m.caco3, postFurnace: yi.postFurnace,
+            postAcid: yi.postAcid > 0 ? yi.postAcid : nil, pellet: yi.pellet,
+            crystallineFraction: file.crystallinity?.crystallineFraction)
+    }
+
+    /// Persist the yield masses for a file into its sidecar (raw .xy untouched).
+    func saveYield(_ file: LoadedFile, _ yi: YieldInputs) {
+        yieldInputs[file.id] = yi
+        AnalysisStore.saveYield(for: file.url, yield: yi)
+    }
     func failed(for file: LoadedFile) -> Bool {
         file.pattern == nil || currentResult(file) == nil
     }
@@ -99,15 +152,18 @@ final class AppModel: ObservableObject {
             var pattern: XRDPattern? = nil
             var parseError: String? = nil
             var autoResult: DGResult? = nil
+            var crystallinity: CrystallinityResult? = nil
             do {
                 let p = try XRDPattern.parse(contentsOf: url)
                 pattern = p
                 autoResult = try? GraphitizationAnalyzer(p).run()
+                crystallinity = try? CrystallinityAnalyzer.analyze(p)
             } catch {
                 parseError = String(describing: error)
             }
             let lf = LoadedFile(url: url, displayName: info.displayName, pattern: pattern,
-                                parseError: parseError, info: info, autoResult: autoResult)
+                                parseError: parseError, info: info, autoResult: autoResult,
+                                crystallinity: crystallinity)
             added.append(lf)
 
             // Auto-load a prior analysis (sidecar) and recompute its result now, so
@@ -115,6 +171,7 @@ final class AppModel: ObservableObject {
             if let rec = AnalysisStore.load(for: url) {
                 settings[lf.id] = rec.settings
                 redoFlags[lf.id] = rec.flaggedForRedo
+                if let yi = rec.yieldInputs { yieldInputs[lf.id] = yi }
                 if let p = pattern { results[lf.id] = FitRunner.run(p, rec.settings).result }
             }
         }
@@ -142,7 +199,7 @@ final class AppModel: ObservableObject {
     /// Remove a file from the session (the .xy and its sidecar are left on disk).
     func remove(_ id: LoadedFile.ID) {
         files.removeAll { $0.id == id }
-        settings[id] = nil; results[id] = nil; redoFlags[id] = nil
+        settings[id] = nil; results[id] = nil; redoFlags[id] = nil; yieldInputs[id] = nil
         if selection == id { selection = files.first?.id }
     }
 
@@ -211,7 +268,8 @@ final class AppModel: ObservableObject {
         for (i, f) in targets.enumerated() {
             batchNote = "Exporting \(i + 1)/\(targets.count): \(f.displayName)"
             consolidated += ReportBuilder.consolidatedRow(fileName: f.url.lastPathComponent,
-                                                          info: f.info, result: currentResult(f))
+                                                          info: f.info, result: currentResult(f),
+                                                          crystallinity: f.crystallinity)
             if let r = currentResult(f), let p = f.pattern {
                 let stem = f.displayName.fileSafe
                 // per-file report CSV
@@ -220,14 +278,16 @@ final class AppModel: ObservableObject {
                 let span = dgRange(p, base: base)
                 let quality = ImpurityScan.scan(p)
                 let csv = ReportBuilder.csv(displayName: f.displayName, fileName: f.url.lastPathComponent,
-                                            result: r, span: span, quality: quality)
+                                            result: r, span: span, quality: quality,
+                                            crystallinity: f.crystallinity)
                 try? csv.write(to: folder.appendingPathComponent("\(stem) — DG report.csv"),
                                atomically: true, encoding: .utf8)
                 // fit PNG
+                let crystSub = f.crystallinity.map { String(format: " · cryst %.0f%%", $0.crystallineFraction * 100) } ?? ""
                 renderExportChart(
                     ExportChart(result: r,
                                 title: includeTitle ? f.displayName : nil,
-                                subtitle: includeTitle ? String(format: "DG %.2f%% · (002) fit", r.dgPercent) : nil,
+                                subtitle: includeTitle ? String(format: "DG %.2f%%%@ · (002) fit", r.dgPercent, crystSub) : nil,
                                 options: options),
                     to: folder.appendingPathComponent("\(stem) — 002 fit.png"))
                 written += 1

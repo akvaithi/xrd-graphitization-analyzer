@@ -5,7 +5,8 @@ import XRDCore
 /// (DetailView) and batch export (AppModel) so they stay identical.
 enum ReportBuilder {
     static func csv(displayName: String, fileName: String, result r: DGResult,
-                    span: DGRange?, quality: ImpurityScan?) -> String {
+                    span: DGRange?, quality: ImpurityScan?,
+                    crystallinity c: CrystallinityResult? = nil) -> String {
         var rows: [(String, String)] = [
             ("sample", displayName), ("file", fileName),
             ("method", r.methodName), ("wavelength_angstrom", String(format: "%.5f", r.wavelength)),
@@ -35,24 +36,33 @@ enum ReportBuilder {
             ("two_theta_offset", String(format: "%+.3f", r.twoThetaOffset)),
             ("fit_R2", String(format: "%.5f", r.fitR2)),
         ]
+        if let c = c {
+            rows += [("crystalline_fraction_pct", String(format: "%.1f", c.crystallineFraction * 100)),
+                     ("disordered_fraction_pct", String(format: "%.1f", c.disorderedFraction * 100)),
+                     ("crystallinity_fit_R2", String(format: "%.4f", c.fitR2))]
+        }
         if let q = quality { rows.append(("data_quality", q.verdict)) }
         return "key,value\n" + rows.map { "\($0.0),\"\($0.1)\"" }.joined(separator: "\n") + "\n"
     }
 
     /// Columns for the consolidated runs CSV (mirrors the Compare tab).
     static func consolidatedHeader() -> String {
-        "file,carbon_type,carbon_ratio,fe_ratio,caco3_ratio,temperature_C,time_h,form,wash,DG,Lc,d_prime,graphitic_xc\n"
+        "file,carbon_type,carbon_ratio,fe_ratio,caco3_ratio,temperature_C,time_h,form,wash,DG,crystallinity_pct,disordered_pct,Lc,d_prime,graphitic_xc\n"
     }
-    static func consolidatedRow(fileName: String, info: RunInfo?, result r: DGResult?) -> String {
+    static func consolidatedRow(fileName: String, info: RunInfo?, result r: DGResult?,
+                                crystallinity c: CrystallinityResult? = nil) -> String {
         func n(_ v: Double?) -> String { v.map { String(format: "%g", $0) } ?? "" }
         func q(_ s: String) -> String { s.contains(",") ? "\"\(s)\"" : s }
         let i = info
-        return [q(fileName), i?.carbonType ?? "", n(i?.carbonRatio), n(i?.feRatio),
-                n(i?.caco3Ratio), i?.temperatureC.map(String.init) ?? "", n(i?.timeH),
-                i?.form ?? "", i?.wash ?? "",
-                r.map { String(format: "%.2f", $0.dgPercent) } ?? "",
-                r.map { String(format: "%.1f", $0.crystalliteLc) } ?? "",
-                r.map { String(format: "%.5f", $0.dPrimeWeighted) } ?? "",
-                r.map { String(format: "%.4f", $0.graphitic.xc) } ?? ""].joined(separator: ",") + "\n"
+        var cols: [String] = [q(fileName), i?.carbonType ?? "", n(i?.carbonRatio), n(i?.feRatio),
+                              n(i?.caco3Ratio), i?.temperatureC.map(String.init) ?? "", n(i?.timeH),
+                              i?.form ?? "", i?.wash ?? ""]
+        cols.append(r.map { String(format: "%.2f", $0.dgPercent) } ?? "")
+        cols.append(c.map { String(format: "%.1f", $0.crystallineFraction * 100) } ?? "")
+        cols.append(c.map { String(format: "%.1f", $0.disorderedFraction * 100) } ?? "")
+        cols.append(r.map { String(format: "%.1f", $0.crystalliteLc) } ?? "")
+        cols.append(r.map { String(format: "%.5f", $0.dPrimeWeighted) } ?? "")
+        cols.append(r.map { String(format: "%.4f", $0.graphitic.xc) } ?? "")
+        return cols.joined(separator: ",") + "\n"
     }
 }

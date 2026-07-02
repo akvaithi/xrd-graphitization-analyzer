@@ -19,6 +19,10 @@ struct DetailView: View {
     @State private var fitError: String?
     @State private var quality: ImpurityScan?
     @State private var dgSpan: DGRange?
+    // Amorphous-aware crystallinity (AMOUNT of crystalline carbon), the companion
+    // to DG% (ordering QUALITY). Computed once per file from the raw pattern —
+    // it's a fixed-window decomposition, independent of the deconvolution settings.
+    @State private var crystallinity: CrystallinityResult?
 
     // AI assist — engine selection now lives in Settings (⌘,).
     @State private var aiBusy = false
@@ -55,6 +59,7 @@ struct DetailView: View {
         .task(id: file.id) {
             settingsLoaded = false
             quality = file.pattern.map { ImpurityScan.scan($0) }
+            crystallinity = file.crystallinity   // computed once at open (AppModel)
             local = model.settings[file.id] ?? model.defaults(for: file)
             settingsLoaded = true
             refit()
@@ -73,6 +78,7 @@ struct DetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let r = result { dgCallout(r) }
+                if let c = crystallinity { crystallinityCard(c) }
                 if let q = quality, !q.hits.isEmpty { qualityCard(q) }
 
                 GroupBox {
@@ -151,7 +157,7 @@ struct DetailView: View {
         }
         .sheet(isPresented: $showExportSheet) {
             if let r = result {
-                ExportPreviewView(result: r, displayName: file.displayName)
+                ExportPreviewView(result: r, displayName: file.displayName, crystallinity: crystallinity)
             }
         }
     }
@@ -175,6 +181,40 @@ struct DetailView: View {
         }
         .frame(maxWidth: .infinity).padding(.vertical, 16)
         .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Crystallinity = *amount* of crystalline graphite, the companion to DG%
+    /// (*ordering quality*). Flags the divergence the project cares about: a high
+    /// DG% can coexist with a notable disordered (amorphous) fraction.
+    private func crystallinityCard(_ c: CrystallinityResult) -> some View {
+        let cryst = c.crystallineFraction * 100
+        let disord = c.disorderedFraction * 100
+        let diverges = (result?.dgPercent ?? 0) >= 90 && c.crystallineFraction < 0.85
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("Crystallinity (amount)", systemImage: "circle.hexagongrid")
+                    .font(.caption).fontWeight(.semibold)
+                Spacer()
+                Text(String(format: "%.1f%%", cryst))
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .monospacedDigit().foregroundStyle(.tint)
+            }
+            Text(String(format: "crystalline graphite %.1f%%  ·  disordered (amorphous + turbostratic) %.1f%%  ·  R² %.4f",
+                        cryst, disord, c.fitR2))
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if diverges {
+                Label("High DG% but a notable disordered fraction remains — ordering is good, the amount of crystalline carbon is not yet complete.",
+                      systemImage: "exclamationmark.bubble")
+                    .font(.caption2).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("XRD index: sharp (002) ÷ total (002) scattering, 16–31° window. Relative, not wt% — calibrate against standards for an absolute figure.")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func qualityCard(_ q: ImpurityScan) -> some View {
@@ -223,6 +263,14 @@ struct DetailView: View {
                 + (r.twoThetaOffset != 0
                    ? [("2θ displacement corr.", String(format: "%+.3f°", r.twoThetaOffset))] : [])
                 + [("Wavelength λ", String(format: "%.5f Å", r.wavelength))])
+
+            if let c = crystallinity {
+                section("Crystallinity (002 amount)", [
+                    ("Crystalline fraction", String(format: "%.1f%%", c.crystallineFraction * 100)),
+                    ("Disordered fraction", String(format: "%.1f%%", c.disorderedFraction * 100)),
+                    ("Graphitic 2θ / FWHM", String(format: "%.3f° / %.3f°", c.graphiticCenter, c.graphiticFWHM)),
+                    ("Decomp R²", String(format: "%.4f", c.fitR2))])
+            }
         }
     }
 
@@ -342,7 +390,7 @@ struct DetailView: View {
     private func saveReport() {
         guard let r = result else { return }
         let csv = ReportBuilder.csv(displayName: file.displayName, fileName: file.url.lastPathComponent,
-                                    result: r, span: dgSpan, quality: quality)
+                                    result: r, span: dgSpan, quality: quality, crystallinity: crystallinity)
         let panel = NSSavePanel()
         panel.nameFieldStringValue = file.displayName.fileSafe + " — DG report.csv"
         panel.allowedContentTypes = [.commaSeparatedText]

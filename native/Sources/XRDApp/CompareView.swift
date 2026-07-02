@@ -13,7 +13,8 @@ struct CompareView: View {
         var id: String { rawValue }
     }
     enum YMetric: String, CaseIterable, Identifiable {
-        case dg = "DG %", lc = "Lc (Å)", dprime = "d′ (Å)", gxc = "Graphitic 2θ (°)"
+        case dg = "DG %", crystallinity = "Crystallinity %", lc = "Lc (Å)",
+             dprime = "d′ (Å)", gxc = "Graphitic 2θ (°)"
         var id: String { rawValue }
     }
     enum Grouping: String, CaseIterable, Identifiable {
@@ -96,7 +97,9 @@ struct CompareView: View {
                         set: { on in if on { excluded.remove(f.id) } else { excluded.insert(f.id) } })) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(f.displayName).font(.system(size: 11)).lineLimit(2)
-                            Text(model.dgText(for: f)).font(.system(size: 10)).foregroundStyle(.secondary)
+                            Text(model.dgText(for: f)
+                                 + (f.crystallinity.map { String(format: " · cryst %.0f%%", $0.crystallineFraction * 100) } ?? ""))
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -140,12 +143,16 @@ struct CompareView: View {
         }
     }
     private func yval(_ f: LoadedFile) -> Double? {
+        // Crystallinity (amount) comes from the fixed per-file decomposition, not
+        // the DG fit — so it's available even when the settings-driven fit isn't.
+        if ym == .crystallinity { return f.crystallinity.map { $0.crystallineFraction * 100 } }
         guard let r = model.currentResult(f) else { return nil }
         switch ym {
         case .dg: return r.dgPercent
         case .lc: return r.crystalliteLc
         case .dprime: return r.dPrimeWeighted
         case .gxc: return r.graphitic.xc
+        case .crystallinity: return nil   // handled above
         }
     }
     private func gval(_ f: LoadedFile) -> String {
@@ -165,16 +172,19 @@ struct CompareView: View {
         guard panel.runModal() == NSApplication.ModalResponse.OK, let url = panel.url else { return }
         func n(_ v: Double?) -> String { v.map { String(format: "%g", $0) } ?? "" }
         func q(_ s: String) -> String { s.contains(",") ? "\"\(s)\"" : s }
-        var out = "file,carbon_type,carbon_ratio,fe_ratio,caco3_ratio,temperature_C,time_h,form,wash,DG,Lc,d_prime,graphitic_xc\n"
+        var out = "file,carbon_type,carbon_ratio,fe_ratio,caco3_ratio,temperature_C,time_h,form,wash,DG,crystallinity_pct,disordered_pct,Lc,d_prime,graphitic_xc\n"
         for f in valid {
-            let i = f.info, r = model.currentResult(f)
-            out += [q(f.url.lastPathComponent), i?.carbonType ?? "", n(i?.carbonRatio), n(i?.feRatio),
-                    n(i?.caco3Ratio), i?.temperatureC.map(String.init) ?? "", n(i?.timeH),
-                    i?.form ?? "", i?.wash ?? "",
-                    r.map { String(format: "%.2f", $0.dgPercent) } ?? "",
-                    r.map { String(format: "%.1f", $0.crystalliteLc) } ?? "",
-                    r.map { String(format: "%.5f", $0.dPrimeWeighted) } ?? "",
-                    r.map { String(format: "%.4f", $0.graphitic.xc) } ?? ""].joined(separator: ",") + "\n"
+            let i = f.info, r = model.currentResult(f), c = f.crystallinity
+            var cols: [String] = [q(f.url.lastPathComponent), i?.carbonType ?? "", n(i?.carbonRatio),
+                                  n(i?.feRatio), n(i?.caco3Ratio), i?.temperatureC.map(String.init) ?? "",
+                                  n(i?.timeH), i?.form ?? "", i?.wash ?? ""]
+            cols.append(r.map { String(format: "%.2f", $0.dgPercent) } ?? "")
+            cols.append(c.map { String(format: "%.1f", $0.crystallineFraction * 100) } ?? "")
+            cols.append(c.map { String(format: "%.1f", $0.disorderedFraction * 100) } ?? "")
+            cols.append(r.map { String(format: "%.1f", $0.crystalliteLc) } ?? "")
+            cols.append(r.map { String(format: "%.5f", $0.dPrimeWeighted) } ?? "")
+            cols.append(r.map { String(format: "%.4f", $0.graphitic.xc) } ?? "")
+            out += cols.joined(separator: ",") + "\n"
         }
         try? out.write(to: url, atomically: true, encoding: .utf8)
     }

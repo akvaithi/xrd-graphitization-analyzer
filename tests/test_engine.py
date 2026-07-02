@@ -223,3 +223,49 @@ def test_python_swift_calibration_parity(tmp_path):
     py = xa.calibrate_internal_standard(x, y, "alpha-Fe")["offset"]
     sw = _swift(str(p), "--peaks", "1", "--calib", "alpha-Fe", key="offset")["offset"]
     assert abs(py - sw) < 0.01, f"calibration offset drift: py={py} swift={sw}"
+
+
+@pytest.mark.skipif(not os.path.exists(SWIFT_CLI), reason="Swift xrd-validate not built")
+def test_python_swift_crystallinity_parity(tmp_path):
+    """xrd_analyzer.crystallinity ↔ XRDCore CrystallinityAnalyzer. Both fit a
+    broad disordered band + a sharp graphitic peak on a pre-subtracted baseline;
+    the crystalline fraction must agree within optimizer (LM vs TRF) noise."""
+    # broad amorphous band + sharp crystalline (002), spanning the 16–31° window
+    x, y = synth_pattern([(80, 24.0, 5.0, 0.3), (60, 26.5, 0.25, 0.6)], lo=12, hi=34)
+    p = tmp_path / "cryst.xy"
+    p.write_text("\n".join(f"{a}\t{b}" for a, b in zip(x, y)))
+    py = xa.crystallinity(x, y)["crystalline_fraction"]
+    sw = _swift(str(p), "--crystallinity", str(p), key="crystalline_fraction")["crystalline_fraction"]
+    assert abs(py - sw) < 0.02, f"crystallinity drift: py={py} swift={sw}"
+
+
+@pytest.mark.skipif(not os.path.exists(SWIFT_CLI), reason="Swift xrd-validate not built")
+def test_python_swift_yield_parity():
+    """research/yield_calc.compute_yield ↔ XRDCore YieldCalc on the sheet sample.
+    Pure arithmetic → must agree to machine precision."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "research"))
+    import yield_calc
+    # synthetic demo inputs — must match the Swift --yield-selftest exactly
+    py = yield_calc.compute_yield(gpc_mass=2.0, c_wt=0.90, s_wt=0.05,
+                                  fe_mass=4.0, caco3_mass=0.6,
+                                  post_furnace=5.8, post_acid=1.9, pellet=6.6,
+                                  crystalline_fraction=0.90)
+    out = subprocess.run([SWIFT_CLI, "--yield-selftest"], capture_output=True, text=True)
+    import json as _json
+    sw = _json.loads(out.stdout.strip().splitlines()[-1])
+    # tolerances match the Python side's output rounding (4–5 dp), not the true
+    # agreement, which is exact — this is pure arithmetic ported 1:1.
+    assert abs(py["yield"]["mass_yield"] - sw["mass_yield"]) < 1e-4
+    assert abs(py["chemistry"]["graphite_theoretical"] - sw["graphite_theoretical"]) < 1e-4
+    assert abs(py["wash"]["wash_check"]["trapped_metal"] - sw["trapped_metal"]) < 1e-4
+
+
+def test_research_crystallinity_matches_engine():
+    """The research/ decomposition must not drift from the shipping engine — both
+    use the same baseline-subtracted 2-component model, so they agree exactly."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "research"))
+    import amorphous  # noqa: E402
+    x, y = synth_pattern([(80, 24.0, 5.0, 0.3), (60, 26.5, 0.25, 0.6)], lo=12, hi=34)
+    eng = xa.crystallinity(x, y)["crystalline_fraction"]
+    res = amorphous.decompose(x, y)["crystalline_fraction"]
+    assert abs(eng - res) < 1e-6, f"research/engine drift: engine={eng} research={res}"
