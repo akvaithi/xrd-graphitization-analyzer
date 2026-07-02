@@ -149,6 +149,25 @@ amorphous↔turbostratic sub-split, which is why it's flagged).
 scatter equally per gram, so the index *ranks* samples reliably but is not wt%
 until calibrated against physical standards (§3).
 
+### Process-chemistry references (yield / simulation)
+
+Background for the iron-catalyzed graphitization mechanism and the yield chemistry
+(CaCO₃ decomposition, Boudouard etching, sulfur trapping) modeled in `simulate.py`
+and `yield_calc.py`:
+
+- **Iron-catalyzed graphitization mechanism** — "Elucidating the Mechanism of
+  Iron-Catalyzed Graphitization: The First Observation of Homogeneous Solid-State
+  Catalysis." [ResearchGate](https://www.researchgate.net/publication/382296563_Elucidating_the_Mechanism_of_Iron-Catalyzed_Graphitization_The_First_Observation_of_Homogeneous_Solid-State_Catalysis)
+- **Sulfur trapping in pet coke** — Majumder et al., *Environmental Protection
+  Research* 3(2) (2023) 341–348, "In-situ Formation of Sulphur-Trapped Petroleum
+  Coke via Thermal Cracking of Vacuum Residue." [WiserPub](https://ojs.wiserpub.com/index.php/EPR/article/view/2992)
+- **Pet coke gasification / carbon loss** — *Fuel* (Elsevier, 2021).
+  [ScienceDirect](https://www.sciencedirect.com/science/article/pii/S0016236121006244)
+- **Explainer video** — [youtu.be/8gncxR-fP7w](https://youtu.be/8gncxR-fP7w)
+
+(See also the primary paper — Banavath et al., *npj Mater. Sustain.* 4:23 (2026),
+the low-temperature Fe-catalytic route this project builds on.)
+
 ---
 
 ## Notes
