@@ -48,6 +48,11 @@ struct YieldInputs: Codable, Equatable {
     var pellet = 0.0         // REQUIRED — total charged mass; scales the recipe ratios
     var postFurnace = 0.0    // REQUIRED — pre-wash mass; the yield basis
     var postAcid = 0.0       // optional — enables the wash-completeness QC
+    // Per-run feed-composition overrides (nil = use the per-grade default). Optional
+    // so sidecars written before this field still decode. Different PC feedstocks
+    // have different carbon/sulfur, so these are set per run.
+    var cWt: Double? = nil   // carbon mass fraction (0–1)
+    var sWt: Double? = nil   // sulfur mass fraction (0–1)
 
     var isComputable: Bool { pellet > 0 && postFurnace > 0 }
 }
@@ -117,9 +122,9 @@ final class AppModel: ObservableObject {
     func yieldResult(for file: LoadedFile) -> YieldResult? {
         guard let yi = yieldInputs[file.id], yi.isComputable,
               let m = derivedMasses(for: file) else { return nil }
-        let comp = YieldCalc.defaultComposition(grade: m.grade)
+        let base = YieldCalc.defaultComposition(grade: m.grade)
         return YieldCalc.compute(
-            gpcMass: m.gpc, cWt: comp.cWt, sWt: comp.sWt, feMass: m.fe,
+            gpcMass: m.gpc, cWt: yi.cWt ?? base.cWt, sWt: yi.sWt ?? base.sWt, feMass: m.fe,
             caco3Mass: m.caco3, postFurnace: yi.postFurnace,
             postAcid: yi.postAcid > 0 ? yi.postAcid : nil, pellet: yi.pellet,
             crystallineFraction: file.crystallinity?.crystallineFraction)

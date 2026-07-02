@@ -182,6 +182,20 @@ def test_masses_from_name_none_when_unparseable():
     assert yield_calc.masses_from_name("random_scan.xy", pellet=6.0) is None
 
 
+def test_composition_override_changes_result():
+    """A per-run carbon-fraction override must be used instead of the grade default."""
+    import yield_calc
+    name = "2GPC-4Fe-0.5CaCO3-1100C-3H"
+    common = dict(pellet=6.0, post_furnace=5.2, post_acid=1.8)
+    default = yield_calc.compute_from_name(name, **common)
+    override = yield_calc.compute_from_name(name, **common, c_wt=0.80)
+    assert default["derived"]["c_wt_overridden"] is False
+    assert override["derived"]["c_wt_overridden"] is True
+    assert abs(override["derived"]["c_wt"] - 0.80) < 1e-9
+    # different feed carbon → different theoretical graphite → different yield
+    assert default["yield"]["mass_yield_pct"] != override["yield"]["mass_yield_pct"]
+
+
 # --------------------------------------------------------------------------
 # data-dependent (skips without the gitignored scan folder)
 # --------------------------------------------------------------------------

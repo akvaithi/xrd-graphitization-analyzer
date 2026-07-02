@@ -74,7 +74,7 @@ struct YieldView: View {
                     Text(f.displayName).font(.headline)
                     if let r = model.yieldResult(for: f) { resultCard(r, f) }
                     else { hint }
-                    inputForm
+                    inputForm(f)
                     recipeInfo(f)
                     summaryTable
                 }
@@ -126,28 +126,54 @@ struct YieldView: View {
         .background(.tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private var inputForm: some View {
-        GroupBox {
+    private func inputForm(_ f: LoadedFile) -> some View {
+        let base = YieldCalc.defaultComposition(grade: f.info?.carbonType)
+        return GroupBox {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
                 field("Pellet (g)", $yi.pellet, "REQUIRED — total charged mass (GPC + Fe + CaCO₃)")
                 field("Post-furnace (g)", $yi.postFurnace, "REQUIRED — pre-wash mass")
                 field("Post-acid (g)", $yi.postAcid, "optional — enables wash QC")
+                GridRow { Divider().gridCellColumns(3) }
+                compField("Carbon fraction", \.cWt, base.cWt)
+                compField("Sulfur fraction", \.sWt, base.sWt)
             }
             .padding(.vertical, 4)
-        } label: { Label("Weighed masses", systemImage: "scalemass").font(.system(size: 12, weight: .semibold)) }
+        } label: {
+            Label("Weighed masses + feed composition", systemImage: "scalemass")
+                .font(.system(size: 12, weight: .semibold))
+        }
+    }
+
+    /// Composition field: shows the effective fraction (per-run override or grade
+    /// default) and lets the user override it per feedstock; "reset" clears it.
+    private func compField(_ label: String, _ kp: WritableKeyPath<YieldInputs, Double?>,
+                           _ fallback: Double) -> some View {
+        let overridden = yi[keyPath: kp] != nil
+        return GridRow {
+            Text(label).foregroundStyle(.secondary).font(.system(size: 12))
+            TextField("0", value: Binding(get: { yi[keyPath: kp] ?? fallback },
+                                          set: { yi[keyPath: kp] = $0 }), format: .number)
+                .textFieldStyle(.roundedBorder).frame(width: 90)
+            HStack(spacing: 6) {
+                if overridden {
+                    Text("per-run override").font(.caption2).foregroundStyle(.tint)
+                    Button("reset") { yi[keyPath: kp] = nil }.buttonStyle(.link).font(.caption2)
+                } else {
+                    Text("grade default (0–1)").font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+        }
     }
 
     /// Read-only recipe/composition derived from the filename (scaled to the pellet).
     @ViewBuilder private func recipeInfo(_ f: LoadedFile) -> some View {
         if let m = model.derivedMasses(for: f) {
-            let comp = YieldCalc.defaultComposition(grade: m.grade)
             VStack(alignment: .leading, spacing: 6) {
                 Text("FROM FILENAME (scaled to pellet)").font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 row("Grade", m.grade ?? "—")
                 row("GPC / Fe / CaCO₃", String(format: "%.4f / %.4f / %.4f g", m.gpc, m.fe, m.caco3))
-                row("Assumed composition", String(format: "C %.1f%% · S %.1f%%", comp.cWt * 100, comp.sWt * 100))
-                Text("Composition is a per-grade default — replace with proximate/ultimate analysis when available.")
+                Text("Composition defaults come from the grade — override per run above for a specific feedstock (replace with proximate/ultimate analysis when available).")
                     .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(12).frame(maxWidth: .infinity, alignment: .leading)

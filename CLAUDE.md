@@ -6,8 +6,11 @@ Guidance for working in this repo.
 Computes **Degree of Graphitization (DG%)** of carbon materials from XRD `.xy`
 scans of the carbon (002) reflection, following the NETL method (OriginLab
 PsdVoigt1 deconvolution → Bragg d-spacings → area-weighted d′ → Maire–Mering).
-Validated against a postdoc's OriginLab gold fits to ~0.9% MAE. Two supported
-front-ends share one method:
+Validated against a postdoc's OriginLab gold fits to ~0.9% MAE. It also computes
+an amorphous-aware **crystallinity index** (the *amount* of crystalline graphite,
+which DG% — a d-spacing/ordering measure — is blind to) and, from weighed run
+masses, a carbon/graphite **yield** (see `research/` and the app's Yield tab).
+Two supported front-ends share one method:
 
 - **Web / Docker** — `xrd_webgui.py` (stdlib `http.server` + numpy/scipy/matplotlib);
   AI assist uses the **Anthropic Claude API**.
@@ -26,21 +29,38 @@ to the method must land in both, verified by the parity tests.
 ## Key files
 - `xrd_analyzer.py` — the engine: `XRDPattern`, `fit_netl` (PsdVoigt1 + free y0),
   `dg_range` (uncertainty), `calibrate_internal_standard`, `scan_impurities`,
-  `dg_from_peaks`, CLI.
+  `dg_from_peaks`, `crystallinity` (amorphous-aware 002 decomposition → crystalline
+  *amount*, mirrored in Swift), CLI.
 - `ai_suggest.py` — Claude deconvolution suggester (features → JSON via tool-use).
-- `xrd_webgui.py` — single-page web app (Analyze / Compare / Stack / Manual);
-  endpoints `/fit`, `/ai_suggest`, `/report`, `/chart`, `/stack`, `/batch_analyze`.
+- `xrd_webgui.py` — single-page web app (Analyze / Compare / Stack / Manual); shows
+  crystallinity alongside DG% (feature parity with the native app); endpoints
+  `/fit`, `/ai_suggest`, `/report`, `/chart`, `/stack`, `/batch_analyze`.
 - `run_parser.py` — parse synthesis parameters from filenames.
+- `research/` — **exploratory tooling kept separate from the shipping engine**
+  (Python; its own `README.md`). `amorphous.py` (crystallinity index + optional
+  amorphous/turbostratic split), `calibration.py` (mixture / internal-standard →
+  absolute wt%), `simulate.py` (PC+Fe+CaCO₃ mass balance + kinetics, incl. Boudouard
+  etching), `trends.py` (intensity-vs-parameter EDA), `yield_calc.py` (carbon/graphite
+  yield from weighed masses; recipe from filename scaled to the pellet; crystalline-
+  graphite yield = mass yield × crystallinity; `--manifest`/`--plots`).
 - `native/Sources/XRDCore/` — Swift engine: `GraphitizationAnalyzer`, `InternalStandard`,
-  `ImpurityScan`, `AISuggester` (Ollama), `LevenbergMarquardt`, `PseudoVoigt`.
+  `ImpurityScan`, `AISuggester` (Ollama), `LevenbergMarquardt`, `PseudoVoigt`,
+  `Crystallinity` (mirrors `xrd_analyzer.crystallinity`), `YieldCalc` (mirrors
+  `research/yield_calc.compute_yield` + `defaultComposition`).
 - `native/Sources/XRDApp/` — SwiftUI app. `AppModel` (a shared singleton) holds
   files + per-file `DeconvSettings` + the current `results`; `DetailView` is the
   Analyze pane. AI engine selection lives in `SettingsView` (⌘,). Supporting types:
   - `FitRunner` — the one `DeconvSettings → FitOptions → DGResult` pipeline (used by
     the live pane and the model-level recompute), so all surfaces show one number.
   - `AnalysisStore` — per-file **sidecar** `MyScan.xy.xrda.json` (settings, result
-    snapshot, applied shift, redo flag, history). Auto-loads on open; the raw `.xy`
-    is never modified. **Tolerant decoder** — old/missing keys fall back to defaults.
+    snapshot, applied shift, redo flag, history, **`YieldInputs`**). Auto-loads on
+    open; the raw `.xy` is never modified. **Tolerant decoder** — old/missing keys
+    fall back to defaults (new fields like `YieldInputs.cWt/sWt` are Optional).
+  - `DetailView` shows a **crystallinity (amount)** card next to DG%; `CompareView`
+    adds it as a metric/column. `YieldView` — optional **Yield tab**: enter pellet /
+    post-furnace / post-acid; recipe (GPC/Fe/CaCO₃) + composition come from the
+    filename (scaled to the pellet), with an editable **per-run composition override**
+    (`YieldInputs.cWt/sWt`, nil = per-grade default). Persisted in the sidecar.
   - `AISuggestionService` + `AIConfig` — shared suggester (calibration pre-fit +
     suggestion→settings); `FoundationModelsSuggester` is the Apple on-device backend
     (gated macOS 27+); `AISuggester` (XRDCore) is the Ollama path.
@@ -57,7 +77,9 @@ to the method must land in both, verified by the parity tests.
   ~455 MB, model self-downloads — **default**) / `none` (~5 MB). Auto-selects a full
   Xcode toolchain (FoundationModels macros need it) and re-stamps the linked SDK to
   27 via `vtool` (so the app adopts the macOS 26+ Liquid Glass design).
-- `tests/test_engine.py` — pytest regression + Python↔Swift parity suite.
+- `tests/test_engine.py` — pytest regression + Python↔Swift parity (DG, crystallinity,
+  yield). `tests/test_research.py` — the `research/` module (index monotonicity,
+  calibration recovery, mass-balance closure, yield self-consistency).
 
 ## Commands
 ```bash
@@ -68,6 +90,10 @@ python3 -m pytest tests/ -q
 # native engine + CLI
 cd native && swift build
 .build/debug/xrd-validate <file.xy> [--peaks 1|2] [--anchor 26.54] [--calib auto]
+.build/debug/xrd-validate <file.xy> --crystallinity      # crystalline (amount) fraction
+# research/ tooling (crystallinity, calibration, simulation, yield)
+python3 research/yield_calc.py --manifest runs.csv --plots out/   # yield + trends
+python3 research/trends.py "DATA/xrd scans" --csv m.csv --plots out/
 # native app bundle (lean runtime-only by default; needs a full Xcode toolchain)
 cd native && ./scripts/make-app.sh           # → .build/"XRD Graphitization Analyzer.app"
 OLLAMA_BUNDLE=full ./scripts/make-app.sh     # also bundle gemma3:4b (~3.6 GB)
@@ -77,9 +103,13 @@ The web `xrd-validate`/Docker need only `requirements.txt`. AI: web reads
 (no setup), else bundled/downloaded gemma3:4b (or set `OLLAMA_HOST` in dev).
 
 ## Conventions / gotchas
-- **Don't commit private data** — `test/`, `*.opj`, `*.xy`, `*.brml`, `math
-  verification/`, fonts are gitignored (research data / proprietary). The repo is
-  **public**.
+- **Don't commit private data** — the repo is **public**. Gitignored: `test/`,
+  `*.opj`, `*.xy`, `*.brml`, `math verification/`, fonts, **`DATA/`,
+  `research/figures/`, `*.xlsx`, `*.pdf`, `*.xrda.json`** (scans, papers,
+  spreadsheets, results, sidecars). Also **scrub real process data out of committed
+  code/tests/docs** — use synthetic/placeholder masses, sample names, compositions,
+  and measured fractions (there's a pending patent). Parity is proven by both
+  engines agreeing on the *same synthetic* inputs, not by real numbers.
 - Cu Kα λ = **1.54187 Å**; graphite d = 0.3354 nm, turbostratic = 0.3440 nm;
   NETL fit window **24–28.5°**.
 - DG is very sensitive to 2θ (~1.4% per 0.01°) — peak-position/calibration changes

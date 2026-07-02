@@ -76,19 +76,24 @@ def masses_from_name(sample: str, pellet: float) -> dict | None:
 
 def compute_from_name(sample: str, *, pellet: float, post_furnace: float,
                       post_acid: float | None = None,
+                      c_wt: float | None = None, s_wt: float | None = None,
                       crystalline_fraction: float | None = None) -> dict:
     """Yield for a run using ONLY the pellet / post-furnace / post-acid masses —
     the recipe ratios and feed composition are derived from the sample name.
-    (Mirrors the macOS Yield tab's smart entry.)"""
+    ``c_wt`` / ``s_wt`` optionally OVERRIDE the per-grade default composition (for
+    a specific feedstock's measured carbon/sulfur). Mirrors the macOS Yield tab."""
     m = masses_from_name(sample, pellet)
     if m is None:
         raise ValueError(f"could not parse carbon/Fe ratios from sample name {sample!r}")
-    c_wt, s_wt = DEFAULT_COMPOSITION.get((m["grade"] or "").upper(), _FALLBACK_COMPOSITION)
-    out = compute_yield(gpc_mass=m["gpc_mass"], c_wt=c_wt, s_wt=s_wt,
+    g_c, g_s = DEFAULT_COMPOSITION.get((m["grade"] or "").upper(), _FALLBACK_COMPOSITION)
+    eff_c = g_c if c_wt is None else c_wt
+    eff_s = g_s if s_wt is None else s_wt
+    out = compute_yield(gpc_mass=m["gpc_mass"], c_wt=eff_c, s_wt=eff_s,
                         fe_mass=m["fe_mass"], caco3_mass=m["caco3_mass"],
                         post_furnace=post_furnace, post_acid=post_acid, pellet=pellet,
                         crystalline_fraction=crystalline_fraction)
-    out["derived"] = {"grade": m["grade"], "c_wt": c_wt, "s_wt": s_wt,
+    out["derived"] = {"grade": m["grade"], "c_wt": eff_c, "s_wt": eff_s,
+                      "c_wt_overridden": c_wt is not None, "s_wt_overridden": s_wt is not None,
                       "gpc_mass": round(m["gpc_mass"], 5), "fe_mass": round(m["fe_mass"], 5),
                       "caco3_mass": round(m["caco3_mass"], 5)}
     return out
@@ -261,6 +266,8 @@ def from_manifest(manifest_csv: str) -> list[dict]:
                 res = compute_from_name(
                     row["sample"], pellet=float(row["pellet"]),
                     post_furnace=float(row["post_furnace"]), post_acid=post_acid,
+                    c_wt=float(row["c_wt"]) if row.get("c_wt") else None,
+                    s_wt=float(row["s_wt"]) if row.get("s_wt") else None,
                     crystalline_fraction=cf)
             res["sample"] = row.get("sample", "")
             rows.append(res)
