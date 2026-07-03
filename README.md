@@ -270,9 +270,12 @@ future tuning; low-confidence calls are flagged.
 
 **[Download the installer](https://github.com/akvaithi/xrd-graphitization-analyzer/releases/latest)**
 (`XRD-Graphitization-Analyzer-Windows-Setup.exe`, same release page as the macOS
-build). It's unsigned, so SmartScreen may show "Windows protected your PC" on
-first run — click **More info → Run anyway**. The installer optionally
-associates `.xy` files with the app and adds Start Menu / desktop shortcuts.
+build). Installs **per-user, no admin/UAC required** — works on locked-down or
+university lab PCs. It's unsigned, so SmartScreen may show "Windows protected
+your PC" on first run — click **More info → Run anyway** (this is about the
+installer's publisher reputation, unrelated to admin rights; see below for the
+plan to get a trusted signature). The installer optionally associates `.xy`
+files with the app and adds Start Menu / desktop shortcuts.
 
 A native WinUI 3 (C#/.NET 8) app with **full 5-tab parity** with the macOS app —
 Analyze · Compare · Stack spectra · Manual calc · Yield — built on the *same*
@@ -323,6 +326,22 @@ Needs the [Swift toolchain for Windows](https://www.swift.org/install/windows/)
 and .NET 8 SDK. `dotnet build windows\XRDAnalyzer.Tests` runs the C# smoke
 tests (P/Invokes `xrd_fit` on a synthetic pattern, checks DG against the same
 reference the Python/Swift parity tests use).
+
+**Getting rid of the SmartScreen warning (not done yet).** The installer is
+unsigned, so it has no reputation with Windows SmartScreen — this is separate
+from the no-admin-required install above, and doesn't block anything, just
+adds a click. Two ways to fix it for real, neither started yet:
+- **Microsoft Store.** An individual developer account is free (Microsoft
+  dropped the one-time fee), but needs manual signup + identity verification
+  + a Store certification review — a human has to do this via
+  [Partner Center](https://partner.microsoft.com/dashboard), it isn't
+  scriptable. Store-distributed MSIX packages are signed by Microsoft, so the
+  cert-trust step goes away too.
+- **Azure Trusted Signing** (~$10/month) — a cloud signing service that issues
+  a properly-trusted certificate without a Store listing; one-time identity
+  verification (a few days), then `signtool` can sign both the MSIX and this
+  installer going forward. Faster than Store certification if the goal is
+  just "no more SmartScreen warning," not Store distribution.
 
 ## Deploy
 

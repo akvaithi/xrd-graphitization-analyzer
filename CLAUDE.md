@@ -122,9 +122,14 @@ to the method must land in both, verified by the parity tests.
   - `windows/scripts/installer.iss` — Inno Setup script for the traditional
     `.exe` installer attached to GitHub Releases (the download most users
     want — no MSIX cert-trust step, just a SmartScreen "Run anyway" click).
-    Reuses the app's existing unpackaged activation path (argv file-open +
-    `AppInstance` single-instance) via registry-based `.xy` file association,
-    no MSIX-specific code needed. `ISCC.exe /DAppVersion=X.Y.Z installer.iss`
+    `PrivilegesRequired=lowest` — installs per-user (`%LocalAppData%\Programs`,
+    `HKCU` file association) with **no admin/UAC prompt**, for locked-down /
+    university lab PCs; all the `{autopf}`/`{autodesktop}`/`HKA` "auto"
+    constants in the script already resolve correctly under `lowest`, so this
+    isn't a second script. Reuses the app's existing unpackaged activation path
+    (argv file-open + `AppInstance` single-instance) via registry-based `.xy`
+    file association, no MSIX-specific code needed.
+    `ISCC.exe /DAppVersion=X.Y.Z installer.iss`
     → `windows/scripts/Output/` (gitignored — built locally/in CI, uploaded to
     Releases, never committed).
   - `windows/XRDAnalyzer.Tests/` — xUnit smoke tests, P/Invoke `xrd_fit`/

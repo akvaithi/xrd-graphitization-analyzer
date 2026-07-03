@@ -4,6 +4,14 @@
 ; "More info -> Run anyway" click on first run, since it isn't signed with a
 ; trusted CA cert).
 ;
+; PrivilegesRequired=lowest: installs per-user (%LocalAppData%\Programs, HKCU
+; file association, per-user Start Menu/desktop shortcuts) and never asks for
+; admin/UAC -- works on machines where the user isn't an administrator (e.g.
+; university lab PCs). All the [Setup]/[Icons]/[Registry] entries below use
+; Inno's "auto" constants ({autopf}, {autodesktop}, HKA, ...), which already
+; resolve to the correct per-user location under `lowest` -- no separate
+; "non-admin" script needed.
+;
 ; Build the Release app first (windows\scripts\build.ps1 -Configuration Release),
 ; then compile with Inno Setup 6 (https://jrsoftware.org/isinfo.php, or
 ; `winget install JRSoftware.InnoSetup`):
@@ -35,6 +43,7 @@ AppSupportURL={#AppURL}/issues
 DefaultDirName={autopf}\XRD Graphitization Analyzer
 DefaultGroupName=XRD Graphitization Analyzer
 UninstallDisplayIcon={app}\XRDAnalyzer.exe
+PrivilegesRequired=lowest
 OutputDir=Output
 OutputBaseFilename=XRD-Graphitization-Analyzer-Windows-Setup
 SetupIconFile=..\XRDAnalyzer\Assets\AppIcon.ico
