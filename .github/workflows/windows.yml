@@ -1,0 +1,59 @@
+name: Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  parity-and-bridge:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Swift toolchain
+        uses: compnerd/gha-setup-swift@main
+        with:
+          branch: swift-6.1-release
+          tag: 6.1-RELEASE
+
+      - name: Build XRDCore CLI + XRDBridge
+        working-directory: native
+        run: swift build --product xrd-validate; swift build --product XRDBridge
+
+      # SwiftPM's `.build/debug` symlink can fail to materialize without the
+      # right privilege; xrd-validate.exe/XRDBridge.dll live at the real
+      # platform-specific path regardless, so point tests there directly if
+      # the symlink didn't appear (mirrors the manual `mklink /J` workaround
+      # used for local dev on Windows).
+      - name: Ensure .build/debug resolves
+        working-directory: native
+        shell: pwsh
+        run: |
+          $real = ".build\x86_64-unknown-windows-msvc\debug"
+          if (-not (Test-Path ".build\debug")) {
+            cmd /c "mklink /J .build\debug $real"
+          }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest
+
+      # Python<->Swift parity: same gate as the local `pytest tests/ -q`, now
+      # exercising the Windows-built xrd-validate.exe instead of skipping.
+      - name: Python <-> Swift parity (Windows-built xrd-validate.exe)
+        run: python -m pytest tests/ -q
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # C# smoke test: P/Invokes xrd_fit (and friends) through XRDBridge.dll
+      # on a synthetic pattern and checks the DG matches the same reference
+      # Python/Swift agree on above -- the one-engine guarantee, from C#.
+      - name: C# bridge smoke test
+        run: dotnet test windows/XRDAnalyzer.Tests/XRDAnalyzer.Tests.csproj -c Debug
+
+      - name: Build the WinUI app (compiles, no MSIX packaging)
+        run: dotnet build windows/XRDAnalyzer/XRDAnalyzer.csproj -c Debug

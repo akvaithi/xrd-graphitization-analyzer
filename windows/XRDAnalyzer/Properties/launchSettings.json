@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "XRDAnalyzer (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "XRDAnalyzer (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

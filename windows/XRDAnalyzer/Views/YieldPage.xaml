@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="XRDAnalyzer.Views.YieldPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid>
+        <TextBlock x:Name="EmptyStateText" Text="No runs loaded. Open .xy scans in Analyze, then enter each run's masses here."
+                   HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" TextWrapping="Wrap" MaxWidth="360" TextAlignment="Center" />
+
+        <Grid x:Name="ContentGrid" ColumnDefinitions="280,*" Visibility="Collapsed">
+            <Grid Grid.Column="0" RowDefinitions="Auto,*" Padding="8" BorderThickness="0,0,1,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                <TextBlock x:Name="FilesHeaderText" Grid.Row="0" Text="0/0 with yield" FontSize="12" Opacity="0.7" Margin="4,4,4,8" />
+                <ListView x:Name="FilesList" Grid.Row="1" SelectionChanged="FilesList_SelectionChanged">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,4" Spacing="2">
+                                <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" FontSize="11" FontWeight="Medium" />
+                                <TextBlock Text="{Binding YieldTag}" FontSize="10" Opacity="0.7" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </Grid>
+
+            <ScrollViewer Grid.Column="1" Padding="16">
+                <StackPanel Spacing="16" MaxWidth="600" HorizontalAlignment="Left">
+                    <TextBlock x:Name="FileTitleText" FontSize="18" FontWeight="SemiBold" />
+
+                    <Border x:Name="ResultCard" Background="{ThemeResource AccentFillColorDefaultBrush}" Opacity="0.9" CornerRadius="10" Padding="12" Visibility="Collapsed">
+                        <StackPanel Spacing="4">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="Mass yield" FontSize="12" Foreground="White" Opacity="0.85" VerticalAlignment="Center" />
+                                <TextBlock x:Name="MassYieldText" Grid.Column="1" FontSize="24" FontWeight="SemiBold" Foreground="White" />
+                            </Grid>
+                            <TextBlock x:Name="CrystGraphiteText" FontSize="12" Foreground="White" TextWrapping="Wrap" />
+                            <StackPanel x:Name="ResultBreakdownPanel" Spacing="4" Margin="0,6,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <Border x:Name="HintText" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="10" Padding="12">
+                        <TextBlock Text="Enter the pellet and post-furnace masses below. The recipe (GPC / Fe / CaCO3) and feed composition are read from the filename."
+                                   TextWrapping="Wrap" FontSize="13" Opacity="0.7" />
+                    </Border>
+
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="10" Padding="12">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Weighed masses + feed composition" FontSize="12" FontWeight="SemiBold" />
+                            <NumberBox x:Name="PelletBox" Header="Pellet (g) — REQUIRED, total charged mass" SpinButtonPlacementMode="Compact" ValueChanged="Field_ValueChanged" />
+                            <NumberBox x:Name="PostFurnaceBox" Header="Post-furnace (g) — REQUIRED, pre-wash mass" SpinButtonPlacementMode="Compact" ValueChanged="Field_ValueChanged" />
+                            <NumberBox x:Name="PostAcidBox" Header="Post-acid (g) — optional, enables wash QC" SpinButtonPlacementMode="Compact" ValueChanged="Field_ValueChanged" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <NumberBox x:Name="CWtBox" Grid.Column="0" Header="Carbon fraction (0-1)" SpinButtonPlacementMode="Compact" ValueChanged="CompositionField_ValueChanged" />
+                                <Button x:Name="CWtResetButton" Grid.Column="1" Content="reset" VerticalAlignment="Bottom" Margin="8,0,0,0" Click="CWtResetButton_Click" />
+                            </Grid>
+                            <TextBlock x:Name="CWtNoteText" FontSize="11" Opacity="0.6" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <NumberBox x:Name="SWtBox" Grid.Column="0" Header="Sulfur fraction (0-1)" SpinButtonPlacementMode="Compact" ValueChanged="CompositionField_ValueChanged" />
+                                <Button x:Name="SWtResetButton" Grid.Column="1" Content="reset" VerticalAlignment="Bottom" Margin="8,0,0,0" Click="SWtResetButton_Click" />
+                            </Grid>
+                            <TextBlock x:Name="SWtNoteText" FontSize="11" Opacity="0.6" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border x:Name="RecipeInfoCard" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="10" Padding="12" Visibility="Collapsed">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="FROM FILENAME (scaled to pellet)" FontSize="11" FontWeight="SemiBold" Opacity="0.7" />
+                            <TextBlock x:Name="RecipeGradeText" FontSize="12" />
+                            <TextBlock x:Name="RecipeMassesText" FontSize="12" />
+                            <TextBlock Text="Composition defaults come from the grade — override per run above for a specific feedstock." FontSize="11" Opacity="0.5" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                    <TextBlock x:Name="RecipeWarnText" Foreground="Orange" TextWrapping="Wrap" FontSize="12" Visibility="Collapsed" />
+
+                    <StackPanel x:Name="SummaryPanel" Spacing="6" Visibility="Collapsed">
+                        <TextBlock Text="ALL RUNS WITH YIELD" FontSize="11" FontWeight="SemiBold" Opacity="0.7" />
+                        <ItemsControl x:Name="SummaryList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" FontSize="12" Margin="0,2" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</Page>

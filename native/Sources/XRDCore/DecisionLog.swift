@@ -31,11 +31,21 @@ public struct DecisionLogEntry: Codable, Sendable {
 }
 
 public enum DecisionLog {
-    /// ~/Library/Application Support/XRD Graphitization Analyzer/decisions.jsonl
+    /// macOS: ~/Library/Application Support/XRD Graphitization Analyzer/decisions.jsonl
+    /// Windows: %LOCALAPPDATA%\XRD Graphitization Analyzer\decisions.jsonl
     public static var fileURL: URL {
-        let base = (try? FileManager.default.url(for: .applicationSupportDirectory,
+        let base: URL
+        #if os(Windows)
+        if let localAppData = ProcessInfo.processInfo.environment["LOCALAPPDATA"] {
+            base = URL(fileURLWithPath: localAppData, isDirectory: true)
+        } else {
+            base = FileManager.default.temporaryDirectory
+        }
+        #else
+        base = (try? FileManager.default.url(for: .applicationSupportDirectory,
                                                  in: .userDomainMask, appropriateFor: nil, create: true))
             ?? FileManager.default.temporaryDirectory
+        #endif
         let dir = base.appendingPathComponent("XRD Graphitization Analyzer", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("decisions.jsonl")

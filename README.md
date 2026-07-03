@@ -32,16 +32,21 @@ peak heights:
 
 *(The web and native apps share the same four tabs and controls.)*
 
-## Three front-ends, one engine
+## Four front-ends, one engine
 
 | Surface | For | Notes |
 |---|---|---|
 | **CLI** ([xrd_analyzer.py](xrd_analyzer.py)) | scripting, batch, CI | single file / directory → table, JSON, CSV |
 | **Web app** ([xrd_webgui.py](xrd_webgui.py), Docker) | the lab / a shared server | Analyze · Compare · Stack · Manual; runs on your host |
 | **Native macOS app** ([native/](native/), Swift) | desktop, offline | interactive deconvolution, native charts, pure-Swift engine, on-device AI |
+| **Native Windows app** ([windows/](windows/), C#/WinUI 3) | desktop, offline | same Swift engine via a small bridge DLL, full 5-tab parity, Ollama AI |
 
-> **Platforms: macOS-native + web.** The Windows desktop build is **deprecated** for
-> now — use the web app (any OS, via Docker/browser) or the native macOS app.
+> **Platforms: macOS-native, Windows-native, and web.** All three run the same
+> validated engine — the Python and Swift implementations are numerically
+> identical (parity tests below), and the Windows app calls the *same* Swift
+> engine as the macOS app through `XRDBridge.dll` (see
+> [windows/](windows/) and [native/Sources/XRDBridge/](native/Sources/XRDBridge/)) —
+> there is no third, independently-maintained DG implementation.
 
 **Validated against the postdoc's OriginLab gold standard** (mean abs error):
 expert hand-placement **0.43%**, AI-assisted **~0.9–1.0%** (Claude / local
@@ -116,8 +121,13 @@ as **CSV**.
 
 **Tests.** `python3 -m pytest tests/` — synthetic math + uncertainty/range checks
 run anywhere; gold-data MAE (≤ 1.1% vs the postdoc fits), calibration-silence on
-aligned samples, and Python↔Swift engine parity run locally and skip cleanly in CI
-when the data/Swift binary aren't present. CI runs the synthetic suite on every push.
+aligned samples, and Python↔Swift engine parity skip cleanly when the data/Swift
+binary aren't present. The `Tests` CI workflow runs the synthetic suite on every
+push (Linux); the `Windows` workflow builds the Swift toolchain + `XRDBridge`/
+`xrd-validate.exe` on `windows-latest` and runs the *same* parity tests for real,
+plus a C# smoke test that P/Invokes the bridge and checks DG against the same
+reference — so "one engine, three front-ends" is a tested guarantee, not just a
+claim.
 
 Validated against the NETL/postdoc OriginLab fits: mean abs error ≈ 1.3 DG% across
 the GPC/CPC sample set. X-ray wavelength is fixed to Cu Kα **λ = 1.54187 Å**.
@@ -255,6 +265,54 @@ future tuning; low-confidence calls are flagged.
 > `none` (~5 MB — Apple on-device only; gemma needs a system Ollama). The large
 > assets are **not** in git. The script also re-stamps the linked SDK to 27 so the
 > app adopts the macOS 26+ Liquid Glass design.
+
+## Native Windows app ([windows/](windows/))
+
+A native WinUI 3 (C#/.NET 8) app with **full 5-tab parity** with the macOS app —
+Analyze · Compare · Stack spectra · Manual calc · Yield — built on the *same*
+Swift `XRDCore` engine, not a reimplementation. `native/Sources/XRDBridge/`
+exposes the engine as a small JSON-over-C-ABI DLL (`XRDBridge.dll`); every
+DG/crystallinity/yield/calibration number the Windows app shows comes from a
+P/Invoke call into that DLL, so the Python↔Swift parity tests guarantee the
+Windows numbers too.
+
+- **Analyze** — per-file deconvolution (peak count, turbostratic lock, background
+  subtract, internal-standard calibration, (002) anchor), DG ± σ (range a–b%),
+  crystallinity + impurity-scan cards, a ScottPlot fit chart, and exports (chart
+  PNG, report CSV, shifted `.xy`).
+- **Compare** — scatter of any metric vs synthesis parameter, colour-by group with
+  trend lines, per-run include toggles, CSV + chart PNG export.
+- **Stack spectra** — overlay/waterfall of raw intensities (offset slider, (002)
+  zoom, baseline subtract).
+- **Manual calc** — DG from hand-entered Origin peaks.
+- **Yield** — weighed-mass entry with per-run feed-composition override, mass
+  yield + crystalline-graphite yield, persisted in the sidecar.
+- **AI assist** — a "Suggest deconvolution" button drives a **local Ollama**
+  model (`gemma3:4b` by default) through the same prompt/feature pipeline as
+  macOS's Ollama path, so the suggestion quality matches; errors (Ollama not
+  running, model not pulled) surface cleanly and the rest of the app keeps working.
+- **Sidecars** (`MyScan.xy.xrda.json`) use the identical schema the macOS app
+  writes, so a scan analyzed on one platform opens with its settings/results
+  intact on the other.
+- **File association** — double-clicking a `.xy` in Explorer opens/focuses the
+  app (single-instance activation redirection), once installed via the MSIX
+  package below.
+
+```powershell
+# Build XRDBridge.dll (release) + the WinUI app; stages the Swift runtime DLLs
+# it needs alongside the app so the result runs standalone.
+windows\scripts\build.ps1 -Configuration Release
+windows\XRDAnalyzer\bin\Release\net8.0-windows10.0.26100.0\win-x64\XRDAnalyzer.exe
+
+# Or produce an installable MSIX (see the script header for the one-time
+# local dev-signing setup):
+windows\scripts\build.ps1 -Configuration Release -Msix
+```
+
+Needs the [Swift toolchain for Windows](https://www.swift.org/install/windows/)
+and .NET 8 SDK. `dotnet build windows\XRDAnalyzer.Tests` runs the C# smoke
+tests (P/Invokes `xrd_fit` on a synthetic pattern, checks DG against the same
+reference the Python/Swift parity tests use).
 
 ## Deploy
 

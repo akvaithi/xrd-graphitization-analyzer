@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// The deconvolution decision the LLM returns (it does NOT compute DG%).
 public struct Suggestion: Codable, Sendable {

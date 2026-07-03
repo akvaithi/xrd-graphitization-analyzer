@@ -1,0 +1,34 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XRDAnalyzer.Engine", "XRDAnalyzer.Engine\XRDAnalyzer.Engine.csproj", "{D0C89C12-5CB0-494A-9A2E-635B67FF49AD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XRDAnalyzer.Tests", "XRDAnalyzer.Tests\XRDAnalyzer.Tests.csproj", "{F9EC24E7-68D8-4881-8998-3B0C7B65B235}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "XRDAnalyzer", "XRDAnalyzer\XRDAnalyzer.csproj", "{F55C4EFA-0037-452E-8DAA-69ECA134AB1C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D0C89C12-5CB0-494A-9A2E-635B67FF49AD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D0C89C12-5CB0-494A-9A2E-635B67FF49AD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D0C89C12-5CB0-494A-9A2E-635B67FF49AD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D0C89C12-5CB0-494A-9A2E-635B67FF49AD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F9EC24E7-68D8-4881-8998-3B0C7B65B235}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F9EC24E7-68D8-4881-8998-3B0C7B65B235}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F9EC24E7-68D8-4881-8998-3B0C7B65B235}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F9EC24E7-68D8-4881-8998-3B0C7B65B235}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F55C4EFA-0037-452E-8DAA-69ECA134AB1C}.Debug|Any CPU.ActiveCfg = Debug|x86
+		{F55C4EFA-0037-452E-8DAA-69ECA134AB1C}.Debug|Any CPU.Build.0 = Debug|x86
+		{F55C4EFA-0037-452E-8DAA-69ECA134AB1C}.Release|Any CPU.ActiveCfg = Release|x86
+		{F55C4EFA-0037-452E-8DAA-69ECA134AB1C}.Release|Any CPU.Build.0 = Release|x86
+	EndGlobalSection
+EndGlobal

@@ -17,11 +17,18 @@ Two supported front-ends share one method:
 - **Native macOS app** — `native/` (SwiftUI; the engine ported to pure Swift);
   AI assist defaults to **Apple's on-device Foundation Model** (macOS 27+), with a
   local **Ollama gemma3:4b** as fallback (zero setup, offline either way).
+- **Native Windows app** — `windows/` (C#/.NET 8 + WinUI 3); full 5-tab parity
+  with the macOS app, reusing the *same* Swift `XRDCore` engine through a small
+  C-ABI bridge (`native/Sources/XRDBridge/` → `XRDBridge.dll`, P/Invoked from
+  C#). AI assist uses **Ollama** (local, `gemma3:4b` by default — same prompt as
+  macOS's Ollama path). No DG/crystallinity/yield/calibration math is
+  reimplemented in C# — everything routes through the bridge.
 
-> **Platforms:** macOS-native + web are the shipping front-ends. A **native Windows
-> app is coming soon** (planned: shared Swift `XRDCore` engine + a WinUI/SwiftCrossUI
-> front-end, with Phi Silica as the on-device AI). Until then don't add ad-hoc
-> Windows code or release a Windows build.
+> **Platforms:** macOS-native, Windows-native, and web all ship. The Windows app
+> is the newest of the three (added after the macOS/web engines were validated) —
+> when changing the DG/crystallinity/yield/calibration method, update
+> `xrd_analyzer.py` **and** `native/Sources/XRDCore/`; the Windows app picks up
+> the change for free since it calls the same Swift engine.
 
 The Python engine and the Swift engine are kept numerically identical — changes
 to the method must land in both, verified by the parity tests.
@@ -77,9 +84,48 @@ to the method must land in both, verified by the parity tests.
   ~455 MB, model self-downloads — **default**) / `none` (~5 MB). Auto-selects a full
   Xcode toolchain (FoundationModels macros need it) and re-stamps the linked SDK to
   27 via `vtool` (so the app adopts the macOS 26+ Liquid Glass design).
+- `native/Sources/XRDBridge/` — `Bridge.swift` (`@_cdecl` C ABI: `xrd_fit`,
+  `xrd_range`, `xrd_curve`, `xrd_impurities`, `xrd_crystallinity`, `xrd_yield`,
+  `xrd_parse_run`, `xrd_manual`, `xrd_ai_suggest`, `xrd_free`) + `Models.swift`
+  (the JSON request/response DTOs). Every function takes one UTF-8 JSON string,
+  returns one heap-allocated UTF-8 JSON string freed by `xrd_free`. Built via
+  `swift build --product XRDBridge` → `XRDBridge.dll`. `DecisionLog.swift` has
+  the one `#if os(Windows)` path guard (`%LOCALAPPDATA%` vs `~/Library/Application
+  Support`); everything else in `XRDCore` builds unmodified on Windows.
+- `windows/` — the WinUI 3 app, mirroring `native/Sources/XRDApp/` structure:
+  - `XRDAnalyzer.Engine/` — `NativeMethods.cs` (P/Invoke), `XrdEngine.cs` (JSON
+    (de)serializing wrapper — the *only* place C# talks to the bridge),
+    `Models/` (C# DTOs matching the Swift side field-for-field), `XyFile.cs`
+    (`.xy` parsing — I/O, not engine math, so it stays in C#).
+  - `XRDAnalyzer/ViewModels/` — `AppViewModel` (shared state: files, settings,
+    results, redo flags, yield inputs, batch progress — mirrors `AppModel`),
+    `AnalyzeViewModel` (per-file interactive state — mirrors `DetailView`, same
+    `_settingsLoaded` gate so a programmatic file switch never clobbers the
+    sidecar).
+  - `XRDAnalyzer/Services/` — `AnalysisStore.cs` (sidecar `.xy.xrda.json` —
+    **same schema as `AnalysisStore.swift`**, so sidecars are cross-platform),
+    `PlotService.cs` (ScottPlot rendering from bridge-computed curve points),
+    `ReportBuilder.cs` (CSV export, matches `ReportBuilder.swift` exactly).
+  - `XRDAnalyzer/Views/` — one page per tab (`AnalyzePage`, `ComparePage`,
+    `StackPage`, `ManualPage`, `YieldPage`), imperative-refresh style (not
+    heavy `x:Bind`) since WinUI binding doesn't cleanly cover dynamic
+    visibility/result rows at this scale.
+  - `windows/scripts/build.ps1` — builds `XRDBridge.dll` (release), stages it +
+    the Swift runtime DLLs (found via PATH, from the swift.org Windows
+    toolchain's "Runtimes" install) into `XRDAnalyzer/Redist/` (gitignored,
+    rebuilt from source), then `dotnet build`. `-Msix` additionally produces an
+    MSIX package (see the script header for the one-time local dev-signing setup
+    — self-signed cert matching `Package.appxmanifest`'s `CN=AppPublisher`,
+    trusted in `LocalMachine\TrustedPeople`, which needs an elevated prompt).
+  - `windows/XRDAnalyzer.Tests/` — xUnit smoke tests, P/Invoke `xrd_fit`/
+    `xrd_manual`/`xrd_parse_run` on a committed synthetic fixture (the one
+    `.xy` file allowed through `.gitignore`'s `*.xy` rule — same synthetic
+    peaks the Python parity tests use inline) and check DG against the
+    Python/Swift reference.
 - `tests/test_engine.py` — pytest regression + Python↔Swift parity (DG, crystallinity,
-  yield). `tests/test_research.py` — the `research/` module (index monotonicity,
-  calibration recovery, mass-balance closure, yield self-consistency).
+  yield); `SWIFT_CLI` resolves to `xrd-validate.exe` on Windows. `tests/test_research.py`
+  — the `research/` module (index monotonicity, calibration recovery, mass-balance
+  closure, yield self-consistency).
 
 ## Commands
 ```bash
@@ -97,6 +143,11 @@ python3 research/trends.py "DATA/xrd scans" --csv m.csv --plots out/
 # native app bundle (lean runtime-only by default; needs a full Xcode toolchain)
 cd native && ./scripts/make-app.sh           # → .build/"XRD Graphitization Analyzer.app"
 OLLAMA_BUNDLE=full ./scripts/make-app.sh     # also bundle gemma3:4b (~3.6 GB)
+
+# Windows app (needs the Swift toolchain for Windows + .NET 8 SDK)
+windows\scripts\build.ps1 -Configuration Release   # → windows\XRDAnalyzer\bin\Release\...\XRDAnalyzer.exe
+windows\scripts\build.ps1 -Configuration Release -Msix   # also produces an MSIX (see script header for dev-signing)
+dotnet test windows\XRDAnalyzer.Tests\XRDAnalyzer.Tests.csproj   # C# bridge smoke test
 ```
 The web `xrd-validate`/Docker need only `requirements.txt`. AI: web reads
 `ANTHROPIC_API_KEY`; the desktop app uses Apple's on-device model on macOS 27+
@@ -116,8 +167,23 @@ The web `xrd-validate`/Docker need only `requirements.txt`. AI: web reads
   matter; keep the internal-standard significance floor (~0.05°).
 - After any engine change, run `pytest` (gold MAE ≤ 1.1%, calibration silence,
   Python↔Swift parity). Gold/Swift tests skip cleanly without data/binary.
-- Commit to `main` triggers the GHCR Docker rebuild + the Tests workflow.
+- Commit to `main` triggers the GHCR Docker rebuild + the Tests workflow (Linux)
+  and the Windows workflow (builds the Swift toolchain + `XRDBridge`/
+  `xrd-validate.exe`, runs the parity tests for real, plus the C# smoke test).
 - macOS Swift Charts: set explicit `chartXScale`/`chartYScale` domains (auto can drift).
+- **Windows Swift builds:** `swift build` creates `.build/debug` (or `/release`) as
+  a *symlink* to the real `.build/x86_64-unknown-windows-msvc/<config>/` path;
+  without Developer Mode / symlink privilege this silently fails (harmless — the
+  DLL/exe still land at the real path) but breaks anything expecting
+  `.build/debug/xrd-validate.exe` (e.g. `tests/test_engine.py`'s `SWIFT_CLI`).
+  Workaround: `cmd /c mklink /J native\.build\debug native\.build\x86_64-unknown-windows-msvc\debug`
+  (a junction, not a symlink — doesn't need the privilege). CI works around this
+  the same way (see `.github/workflows/windows.yml`).
+- **PowerShell 5.1 + this repo's scripts:** avoid non-ASCII characters (em dashes,
+  curly quotes) in `.ps1` files — without a UTF-8 BOM, PS 5.1 can misparse them
+  mid-string. Also avoid `$ErrorActionPreference = "Stop"` around native-exe calls
+  (e.g. `swift build`) — any stderr output from a native tool becomes a fatal
+  `NativeCommandError` even on exit code 0; check `$LASTEXITCODE` explicitly instead.
 
 ## Author
 Arun Vaithianathan — akvaithi.page — TAMU NETL/ARPA-E graphite-from-coke project.

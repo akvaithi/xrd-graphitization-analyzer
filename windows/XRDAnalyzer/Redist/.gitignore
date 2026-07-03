@@ -1,0 +1,4 @@
+# Staged by windows/scripts/build.ps1 — XRDBridge.dll + the Swift runtime
+# DLLs it needs. Rebuilt from source, not checked in.
+*.dll
+!.gitignore

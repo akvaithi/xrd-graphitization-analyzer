@@ -26,7 +26,8 @@ import xrd_analyzer as xa  # noqa: E402
 LAM = 1.54187
 GOLD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "test", "XRD Data")
 SWIFT_CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "native", ".build", "debug", "xrd-validate")
+                         "native", ".build", "debug",
+                         "xrd-validate.exe" if sys.platform == "win32" else "xrd-validate")
 
 
 # --------------------------------------------------------------------------

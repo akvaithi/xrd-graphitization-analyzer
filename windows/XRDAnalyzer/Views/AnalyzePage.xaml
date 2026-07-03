@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Page
+    x:Class="XRDAnalyzer.Views.AnalyzePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:sp="using:ScottPlot.WinUI"
+    mc:Ignorable="d">
+
+    <Grid ColumnDefinitions="280,*" AllowDrop="True" DragOver="Page_DragOver" Drop="Page_Drop">
+
+        <!-- Sidebar: loaded runs -->
+        <Grid Grid.Column="0" RowDefinitions="Auto,*" Padding="8" BorderThickness="0,0,1,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="4,4,4,8">
+                <TextBlock Text="Runs" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button x:Name="OpenButton" Content="Open .xy…" Click="OpenButton_Click" HorizontalAlignment="Right" />
+            </StackPanel>
+            <ListView x:Name="FilesList" Grid.Row="1" SelectionChanged="FilesList_SelectionChanged">
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Margin="0,4" Spacing="2">
+                            <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" FontSize="12" FontWeight="Medium" />
+                            <TextBlock Text="{Binding DgText}" FontSize="11" Opacity="0.7" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+
+        <!-- Detail: controls + chart -->
+        <Grid x:Name="DetailGrid" Grid.Column="1" ColumnDefinitions="340,*" Visibility="Collapsed">
+            <ScrollViewer Grid.Column="0" Padding="16">
+                <StackPanel Spacing="16">
+
+                    <!-- DG callout -->
+                    <Border Background="{ThemeResource AccentFillColorDefaultBrush}" Opacity="0.9" CornerRadius="12" Padding="0,16">
+                        <StackPanel HorizontalAlignment="Center" Spacing="4">
+                            <TextBlock Text="Degree of Graphitization" FontSize="11" HorizontalAlignment="Center" Foreground="White" Opacity="0.85" />
+                            <TextBlock x:Name="DgValueText" FontSize="36" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="White" />
+                            <TextBlock x:Name="DgSigmaText" FontSize="11" HorizontalAlignment="Center" Foreground="White" Opacity="0.85" />
+                            <TextBlock x:Name="DgMethodText" FontSize="11" HorizontalAlignment="Center" Foreground="White" Opacity="0.85" />
+                            <TextBlock x:Name="DgRangeText" FontSize="11" HorizontalAlignment="Center" Foreground="White" Opacity="0.85" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Crystallinity card -->
+                    <Border x:Name="CrystallinityCard" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="10" Padding="12" Visibility="Collapsed">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="Crystallinity (amount)" FontSize="12" FontWeight="SemiBold" />
+                                <TextBlock x:Name="CrystallinityValueText" Grid.Column="1" FontSize="18" FontWeight="SemiBold" />
+                            </Grid>
+                            <TextBlock x:Name="CrystallinityDetailText" FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
+                            <TextBlock x:Name="CrystallinityWarnText" FontSize="11" Foreground="Orange" TextWrapping="Wrap" Visibility="Collapsed" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Impurity / quality card -->
+                    <Border x:Name="QualityCard" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="10" Padding="12" Visibility="Collapsed">
+                        <StackPanel Spacing="4">
+                            <TextBlock x:Name="QualityVerdictText" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <ItemsControl x:Name="QualityHitsList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" FontSize="11" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Deconvolution controls -->
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="10" Padding="12">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="Deconvolution" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" x:Name="ResetButton" Content="Reset" Click="ResetButton_Click" />
+                            </Grid>
+
+                            <RadioButtons x:Name="PeakCountRadio" Header="Peaks" SelectionChanged="PeakCountRadio_SelectionChanged">
+                                <RadioButtons.Items>
+                                    <x:String>1 peak</x:String>
+                                    <x:String>2 peaks</x:String>
+                                </RadioButtons.Items>
+                            </RadioButtons>
+
+                            <ToggleSwitch x:Name="TurboLockedToggle" Header="Lock turbostratic 2θ" Toggled="TurboLockedToggle_Toggled" />
+                            <NumberBox x:Name="TurboCenterBox" Header="Turbostratic 2θ" SmallChange="0.01" SpinButtonPlacementMode="Compact"
+                                       ValueChanged="TurboCenterBox_ValueChanged" Visibility="Collapsed" />
+
+                            <ToggleSwitch x:Name="SubtractBgToggle" Header="Subtract sloped background (24–26.5°)" Toggled="SubtractBgToggle_Toggled" />
+
+                            <ComboBox x:Name="CalStdPhaseCombo" Header="Internal-std calibration" SelectionChanged="CalStdPhaseCombo_SelectionChanged">
+                                <x:String>off</x:String>
+                                <x:String>auto</x:String>
+                                <x:String>Fe3C</x:String>
+                                <x:String>alpha-Fe</x:String>
+                                <x:String>CaO</x:String>
+                            </ComboBox>
+                            <TextBlock x:Name="CalibrationText" FontSize="11" Opacity="0.7" />
+
+                            <ToggleSwitch x:Name="AnchorOnToggle" Header="Anchor (002) to a known angle" Toggled="AnchorOnToggle_Toggled" />
+                            <NumberBox x:Name="AnchorTargetBox" Header="Anchor target (°)" SmallChange="0.01" SpinButtonPlacementMode="Compact"
+                                       ValueChanged="AnchorTargetBox_ValueChanged" Visibility="Collapsed" />
+                            <TextBlock x:Name="OffsetText" FontSize="11" Opacity="0.7" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- AI assist -->
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="10" Padding="12">
+                        <StackPanel Spacing="8">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="AI assist" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock x:Name="AiConfidenceText" Grid.Column="1" FontSize="11" Visibility="Collapsed" />
+                            </Grid>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="SuggestButton" Content="Suggest deconvolution" Click="SuggestButton_Click" />
+                                <ProgressRing x:Name="AiProgressRing" Width="18" Height="18" IsActive="False" />
+                            </StackPanel>
+                            <TextBlock x:Name="AiNoteText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Export -->
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="10" Padding="12">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Export" FontSize="12" FontWeight="SemiBold" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="ChartPngButton" Content="Chart…" Click="ChartPngButton_Click" />
+                                <Button x:Name="ReportCsvButton" Content="Report (CSV)" Click="ReportCsvButton_Click" />
+                                <Button x:Name="ShiftedXyButton" Content="Shifted .xy" Click="ShiftedXyButton_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Fit error -->
+                    <TextBlock x:Name="FitErrorText" Foreground="Red" TextWrapping="Wrap" Visibility="Collapsed" />
+
+                    <!-- Result rows -->
+                    <StackPanel x:Name="ResultRowsPanel" Spacing="10" />
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Column="1" Padding="16">
+                <sp:WinUIPlot x:Name="ChartControl" />
+                <Border x:Name="FitFailedOverlay" Background="{ThemeResource LayerFillColorDefaultBrush}" Visibility="Collapsed">
+                    <TextBlock Text="Fit failed — adjust the deconvolution settings." HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.7" />
+                </Border>
+            </Grid>
+        </Grid>
+
+        <Grid x:Name="EmptyState" Grid.Column="1">
+            <TextBlock Text="Select a run, or open more." HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.6" />
+        </Grid>
+
+    </Grid>
+</Page>

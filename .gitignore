@@ -1,6 +1,9 @@
 # Test / sample data — not committed
 *.xy
 *.brml
+# Exception: synthetic (non-proprietary) fixture for the C# bridge smoke tests —
+# same synthetic peaks used inline by tests/test_engine.py's parity tests.
+!windows/XRDAnalyzer.Tests/Fixtures/synthetic_002.xy
 
 # Proprietary research data & results — PUBLIC repo, keep out.
 # (Inline comments are NOT allowed in .gitignore — keep patterns on their own line.)
