@@ -268,6 +268,12 @@ future tuning; low-confidence calls are flagged.
 
 ## Native Windows app ([windows/](windows/))
 
+**[Download the installer](https://github.com/akvaithi/xrd-graphitization-analyzer/releases/latest)**
+(`XRD-Graphitization-Analyzer-Windows-Setup.exe`, same release page as the macOS
+build). It's unsigned, so SmartScreen may show "Windows protected your PC" on
+first run — click **More info → Run anyway**. The installer optionally
+associates `.xy` files with the app and adds Start Menu / desktop shortcuts.
+
 A native WinUI 3 (C#/.NET 8) app with **full 5-tab parity** with the macOS app —
 Analyze · Compare · Stack spectra · Manual calc · Yield — built on the *same*
 Swift `XRDCore` engine, not a reimplementation. `native/Sources/XRDBridge/`
@@ -295,14 +301,18 @@ Windows numbers too.
   writes, so a scan analyzed on one platform opens with its settings/results
   intact on the other.
 - **File association** — double-clicking a `.xy` in Explorer opens/focuses the
-  app (single-instance activation redirection), once installed via the MSIX
-  package below.
+  app (single-instance activation redirection), whether installed via the .exe
+  installer or the MSIX package below.
 
 ```powershell
 # Build XRDBridge.dll (release) + the WinUI app; stages the Swift runtime DLLs
 # it needs alongside the app so the result runs standalone.
 windows\scripts\build.ps1 -Configuration Release
 windows\XRDAnalyzer\bin\Release\net8.0-windows10.0.26100.0\win-x64\XRDAnalyzer.exe
+
+# Traditional installer .exe (Inno Setup: winget install JRSoftware.InnoSetup) —
+# what's attached to the GitHub release; no cert-trust step for end users:
+ISCC.exe /DAppVersion=1.7.1 windows\scripts\installer.iss
 
 # Or produce an installable MSIX (see the script header for the one-time
 # local dev-signing setup):

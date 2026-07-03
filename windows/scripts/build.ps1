@@ -22,7 +22,13 @@
 param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
-    [switch]$Msix
+    [switch]$Msix,
+    # Pinned rather than left to auto-detect: the csproj's default RID
+    # follows the *invoking process's* architecture, which flips between
+    # win-x86/win-x64 depending on which dotnet host got resolved -- not the
+    # target machine's architecture. win-x64 covers the overwhelming
+    # majority of Windows installs.
+    [string]$RuntimeIdentifier = "win-x64"
 )
 $RepoRoot = Resolve-Path "$PSScriptRoot\..\.."
 $Native = Join-Path $RepoRoot "native"
@@ -59,15 +65,15 @@ $DllCount = (Get-ChildItem $RedistDir -Filter "*.dll").Count
 Write-Host "==> Staged $DllCount DLLs into $RedistDir"
 
 # --- 4. Build (and optionally package) the C# app ---------------------------
-$BuildArgs = @($AppProject, "-c", $Configuration)
+$BuildArgs = @($AppProject, "-c", $Configuration, "-r", $RuntimeIdentifier)
 if ($Msix) {
     $AppPackageDir = Join-Path $WindowsDir "XRDAnalyzer\AppPackages\"
     $BuildArgs += "/p:GenerateAppxPackageOnBuild=true"
     $BuildArgs += "/p:AppxPackageDir=$AppPackageDir"
 }
-Write-Host "==> dotnet build $AppProject -c $Configuration"
+Write-Host "==> dotnet build $AppProject -c $Configuration -r $RuntimeIdentifier"
 & dotnet build @BuildArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet build failed" }
 
-Write-Host "Done. Run: windows\XRDAnalyzer\bin\$Configuration\net8.0-windows10.0.26100.0\win-*\XRDAnalyzer.exe"
+Write-Host "Done. Run: windows\XRDAnalyzer\bin\$Configuration\net8.0-windows10.0.26100.0\$RuntimeIdentifier\XRDAnalyzer.exe"
 if ($Msix) { Write-Host "MSIX package(s): windows\XRDAnalyzer\AppPackages\" }

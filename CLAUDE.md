@@ -113,10 +113,20 @@ to the method must land in both, verified by the parity tests.
   - `windows/scripts/build.ps1` — builds `XRDBridge.dll` (release), stages it +
     the Swift runtime DLLs (found via PATH, from the swift.org Windows
     toolchain's "Runtimes" install) into `XRDAnalyzer/Redist/` (gitignored,
-    rebuilt from source), then `dotnet build`. `-Msix` additionally produces an
-    MSIX package (see the script header for the one-time local dev-signing setup
-    — self-signed cert matching `Package.appxmanifest`'s `CN=AppPublisher`,
+    rebuilt from source; Release-only — Debug uses `XRDAnalyzer.Engine`'s own
+    dev-convenience copy straight from the Swift debug build, so the two never
+    collide), then `dotnet build`. `-Msix` additionally produces an MSIX
+    package (see the script header for the one-time local dev-signing setup —
+    self-signed cert matching `Package.appxmanifest`'s `CN=AppPublisher`,
     trusted in `LocalMachine\TrustedPeople`, which needs an elevated prompt).
+  - `windows/scripts/installer.iss` — Inno Setup script for the traditional
+    `.exe` installer attached to GitHub Releases (the download most users
+    want — no MSIX cert-trust step, just a SmartScreen "Run anyway" click).
+    Reuses the app's existing unpackaged activation path (argv file-open +
+    `AppInstance` single-instance) via registry-based `.xy` file association,
+    no MSIX-specific code needed. `ISCC.exe /DAppVersion=X.Y.Z installer.iss`
+    → `windows/scripts/Output/` (gitignored — built locally/in CI, uploaded to
+    Releases, never committed).
   - `windows/XRDAnalyzer.Tests/` — xUnit smoke tests, P/Invoke `xrd_fit`/
     `xrd_manual`/`xrd_parse_run` on a committed synthetic fixture (the one
     `.xy` file allowed through `.gitignore`'s `*.xy` rule — same synthetic

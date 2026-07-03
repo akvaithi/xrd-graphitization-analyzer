@@ -38,6 +38,10 @@ BundleArtifacts/
 *.appxbundle
 *.appxupload
 
+# Inno Setup installer output (built locally / in CI, uploaded to GitHub
+# Releases -- not committed)
+scripts/Output/
+
 # Publish output
 publish/
 *.pubxml
