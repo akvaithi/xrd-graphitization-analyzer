@@ -137,13 +137,20 @@ validated only by internal consistency (monotonic with temperature; unstable
 amorphous↔turbostratic sub-split, which is why it's flagged).
 
 - **Warren**, *Phys. Rev.* 59 (1941) 693 — turbostratic random-layer scattering.
+  [DOI](https://link.aps.org/doi/10.1103/PhysRev.59.693)
 - **Franklin**, *Proc. R. Soc. A* 209 (1951) 196 — Lc / d₀₀₂ crystallite parameters.
-- **Maire & Méring**, *Chem. Phys. Carbon* 6 (1970) — degree-of-graphitization (DG%).
+  [DOI](https://royalsocietypublishing.org/doi/10.1098/rspa.1951.0197)
+- **Maire & Méring**, *Chem. Phys. Carbon* 6 (1970) 125–190 — degree-of-graphitization
+  (DG%). Book chapter (Marcel Dekker), no article DOI; volume record:
+  [OSTI](https://www.osti.gov/biblio/4445451)
 - **Iwashita et al.**, *Carbon* 42 (2004) 701–714 — standard XRD procedure for carbons.
+  [DOI](https://doi.org/10.1016/j.carbon.2004.02.008)
 - **Lu, Sahajwalla et al.**, *Carbon* 39 (2001) 1821–1833 — (002) crystalline+amorphous
   deconvolution & area ratios (closest published analogue to our index).
+  [ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S0008622300003183)
 - **Ruland & Smarsly**, *J. Appl. Cryst.* 35 (2002) 624 — why an area ratio is an
   *index*, not a mass fraction (rigorous fractions need total coherent scattering).
+  [DOI](https://doi.org/10.1107/S0021889802011007)
 
 **Central caveat (Ruland & Smarsly):** amorphous and crystalline carbon don't
 scatter equally per gram, so the index *ranks* samples reliably but is not wt%
@@ -166,7 +173,9 @@ and `yield_calc.py`:
 - **Explainer video** — [youtu.be/8gncxR-fP7w](https://youtu.be/8gncxR-fP7w)
 
 (See also the primary paper — Banavath et al., *npj Mater. Sustain.* 4:23 (2026),
-the low-temperature Fe-catalytic route this project builds on.)
+"Low-temperature catalytic upcycling of petroleum coke into battery-grade
+graphite," the low-temperature Fe-catalytic route this project builds on.
+[Nature](https://www.nature.com/articles/s44296-026-00115-w))
 
 ---
 
