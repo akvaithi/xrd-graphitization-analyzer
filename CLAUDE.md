@@ -199,6 +199,18 @@ The web `xrd-validate`/Docker need only `requirements.txt`. AI: web reads
   mid-string. Also avoid `$ErrorActionPreference = "Stop"` around native-exe calls
   (e.g. `swift build`) — any stderr output from a native tool becomes a fatal
   `NativeCommandError` even on exit code 0; check `$LASTEXITCODE` explicitly instead.
+- **`.csproj`/`.xaml` XML comments can't contain `--`** (MSBuild fails the whole
+  project with MSB4025) — an easy trap when writing an em-dash-style aside in a
+  `<!-- ... -->` comment; use a comma or period instead.
+- **Unpackaged WinUI builds don't get `Content` items for free.** The template's
+  `<Content Include="Assets\...">` items (app icon, tile logos) only flow into an
+  MSIX package automatically; without `CopyToOutputDirectory` on each item,
+  `dotnet build`'s plain output directory has no `Assets\` folder at all, so
+  runtime calls like `AppWindow.SetIcon("Assets/AppIcon.ico")`
+  (`MainWindow.xaml.cs`) silently fail and fall back to a generic icon. Since the
+  `.exe` installer (the primary, no-admin distribution path) is an unpackaged
+  build, this is a correctness bug, not just cosmetic — verify the *actual*
+  taskbar icon after any Assets change, not just that the build succeeds.
 
 ## Author
 Arun Vaithianathan — akvaithi.page — TAMU NETL/ARPA-E graphite-from-coke project.

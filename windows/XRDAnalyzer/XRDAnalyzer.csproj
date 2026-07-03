@@ -5,6 +5,9 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>XRDAnalyzer</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The .exe's own PE icon resource: what Explorer/shortcuts/Alt-Tab
+         show before AppWindow.SetIcon (MainWindow.xaml.cs) takes effect. -->
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Platforms>x86;x64;ARM64</Platforms>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-$([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant())</RuntimeIdentifier>
     <PublishProfile Condition="Exists('Properties\PublishProfiles\win-$(Platform).pubxml')">win-$(Platform).pubxml</PublishProfile>
@@ -19,16 +22,24 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- CopyToOutputDirectory: the template's Content items are only picked up
+       automatically for MSIX-packaged builds (where they resolve relative to
+       the package root). For the unpackaged builds this project actually
+       ships (the .exe installer, the primary no-admin distribution path),
+       nothing copied Assets\ into the output directory at all, so
+       AppWindow.SetIcon("Assets/AppIcon.ico") (MainWindow.xaml.cs) was
+       silently failing and falling back to a generic icon, a real bug
+       that predates and is separate from any specific icon's artwork. -->
   <ItemGroup>
-    <Content Include="Assets\SplashScreen.scale-200.png" />
-    <Content Include="Assets\LockScreenLogo.scale-200.png" />
-    <Content Include="Assets\Square150x150Logo.scale-200.png" />
-    <Content Include="Assets\Square44x44Logo.scale-200.png" />
-    <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
-    <Content Include="Assets\Square44x44Logo.targetsize-48_altform-lightunplated.png" />
-    <Content Include="Assets\StoreLogo.png" />
-    <Content Include="Assets\AppIcon.ico" />
-    <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+    <Content Include="Assets\SplashScreen.scale-200.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\LockScreenLogo.scale-200.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\Square150x150Logo.scale-200.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\Square44x44Logo.scale-200.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\Square44x44Logo.targetsize-48_altform-lightunplated.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\StoreLogo.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\AppIcon.ico"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
+    <Content Include="Assets\Wide310x150Logo.scale-200.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></Content>
   </ItemGroup>
 
   <!-- XRDBridge.dll + the Swift runtime DLLs it needs, staged here by
