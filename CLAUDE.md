@@ -44,12 +44,15 @@ to the method must land in both, verified by the parity tests.
   `/fit`, `/ai_suggest`, `/report`, `/chart`, `/stack`, `/batch_analyze`.
 - `run_parser.py` — parse synthesis parameters from filenames.
 - `research/` — **exploratory tooling kept separate from the shipping engine**
-  (Python; its own `README.md`). `amorphous.py` (crystallinity index + optional
-  amorphous/turbostratic split), `calibration.py` (mixture / internal-standard →
-  absolute wt%), `simulate.py` (PC+Fe+CaCO₃ mass balance + kinetics, incl. Boudouard
-  etching), `trends.py` (intensity-vs-parameter EDA), `yield_calc.py` (carbon/graphite
-  yield from weighed masses; recipe from filename scaled to the pellet; crystalline-
-  graphite yield = mass yield × crystallinity; `--manifest`/`--plots`).
+  (Python; its own `README.md`), scoped to real scan/measurement data. `amorphous.py`
+  (crystallinity index + optional amorphous/turbostratic split), `calibration.py`
+  (mixture / internal-standard → absolute wt%), `trends.py` (intensity-vs-parameter
+  EDA), `yield_calc.py` (carbon/graphite yield from weighed masses; recipe from
+  filename scaled to the pellet; crystalline-graphite yield = mass yield ×
+  crystallinity; `--manifest`/`--plots`). The process **mass-balance + kinetics
+  simulation** (formerly `research/simulate.py`) and future **ReaxFF** atomistic
+  work live in the sibling private repo `coke-graphitization-sim` — this repo
+  stays scoped to XRD analysis and yield calculations over real data.
 - `native/Sources/XRDCore/` — Swift engine: `GraphitizationAnalyzer`, `InternalStandard`,
   `ImpurityScan`, `AISuggester` (Ollama), `LevenbergMarquardt`, `PseudoVoigt`,
   `Crystallinity` (mirrors `xrd_analyzer.crystallinity`), `YieldCalc` (mirrors

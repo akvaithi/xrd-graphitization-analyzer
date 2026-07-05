@@ -1,4 +1,4 @@
-# `research/` — amorphous accounting, calibration & a process mass balance
+# `research/` — amorphous accounting & calibration
 
 Exploratory tooling around one open question in the catalytic-graphitization
 project:
@@ -77,7 +77,6 @@ calibration the moment those standards are scanned.
 |---|---|---|
 | `amorphous.py` | Decomposes the (002) into a sharp crystalline peak vs a broad disordered band → **crystallinity index** (amount). Optional 3-way amorphous/turbostratic split, flagged uncertain. | `python research/amorphous.py <file.xy>` |
 | `calibration.py` | Turns the index into **absolute crystalline-graphite wt%** via mixture or internal-standard calibration. Self-test validates the math on synthetic blends. | `python research/calibration.py --selftest` / `--manifest cal.csv` |
-| `simulate.py` | **Mass balance + kinetics**: where every gram of C / Fe / Ca / S / O goes across pyrolysis + acid wash; tracks DG% (ordering) **and** crystalline fraction (amount) separately so the divergence is explicit; includes **Boudouard etching** (C+CO₂→2CO — CaCO₃ costs carbon) and an optional TGA prediction. | `python research/simulate.py --grade GPC --temp 1600 --time 24` |
 | `yield_calc.py` | **Carbon/graphite mass yield** from weighed masses. Ports the group's yield spreadsheet (CaCO₃→CaO+CO₂, Boudouard, CaO+S→CaS, wash/trapped-metal), reconciles the furnace loss against the measured mass, and reports **crystalline-graphite yield = mass yield × crystallinity index**. Only the **post-furnace** mass is required (post-acid is optional → wash QC). `--plots` draws yield vs CaCO₃/Fe/temperature. Mirrored in Swift (`XRDCore/YieldCalc.swift`) and surfaced as an optional **Yield tab** in the macOS app (masses persist in each scan's sidecar). | `python research/yield_calc.py --selftest` / `--manifest runs.csv --plots out/` |
 | `trends.py` | Batch EDA over the scan folder: every metric vs temperature / time / Fe% / CaCO₃ / grade; emits a CSV + plots, incl. the DG%-vs-crystalline divergence. | `python research/trends.py --csv out.csv --plots plots/` |
 | `_shared.py` | Bridge to the engine + the cross-sample **normalization** primitives. | — |
@@ -97,15 +96,10 @@ The fit auto-selects linear vs quadratic (the metric↔wt% map is mildly curved
 because the normalizer also moves with composition). `--selftest` builds known
 synthetic blends and confirms recovery (held-out MAE < 5 wt%).
 
-### Simulation (`simulate.py`)
-Accounts for `PC + Fe + CaCO₃ → graphite + residual amorphous + volatiles + CaO +
-recovered Fe₂O₃`, closing to 100%. Kinetics (`crystalline_fraction`) use an
-Avrami–Arrhenius extent with illustrative constants (a low-temperature onset that
-saturates by the paper's conditions); DG% is mapped to a high, narrow band (paper
-Fig 3b/4b) so it saturates near ~98 % while the amount keeps climbing. PC
-compositions, kinetic constants, and removal efficiencies are **editable
-assumptions** — replace with your measured values. Add `--tga` for the burn-off
-(DTG) prediction.
+> The mass-balance + kinetics process simulation (`simulate.py`) has moved to the
+> sibling [coke-graphitization-sim](https://github.com/akvaithi/coke-graphitization-sim)
+> repo (private), which is also where ReaxFF/atomistic simulation work will live.
+> This repo stays scoped to XRD analysis and yield calculations over real data.
 
 ---
 
@@ -159,8 +153,8 @@ until calibrated against physical standards (§3).
 ### Process-chemistry references (yield / simulation)
 
 Background for the iron-catalyzed graphitization mechanism and the yield chemistry
-(CaCO₃ decomposition, Boudouard etching, sulfur trapping) modeled in `simulate.py`
-and `yield_calc.py`:
+(CaCO₃ decomposition, Boudouard etching, sulfur trapping) modeled in `yield_calc.py`
+(and, for the process mass-balance, in the sibling `coke-graphitization-sim` repo):
 
 - **Iron-catalyzed graphitization mechanism** — "Elucidating the Mechanism of
   Iron-Catalyzed Graphitization: The First Observation of Homogeneous Solid-State

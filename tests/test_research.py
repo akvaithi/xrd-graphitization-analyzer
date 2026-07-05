@@ -1,5 +1,5 @@
 """
-Tests for the research/ module (amorphous accounting, calibration, simulation).
+Tests for the research/ module (amorphous accounting, calibration, yield).
 
 - Synthetic tests run anywhere and lock in the math.
 - The one data-dependent check skips cleanly when the (gitignored) scan folder
@@ -19,7 +19,6 @@ sys.path.insert(0, os.path.join(_ROOT, "research"))
 
 import amorphous  # noqa: E402
 import calibration  # noqa: E402
-import simulate  # noqa: E402
 from _shared import DATA_DIR  # noqa: E402
 
 
@@ -75,58 +74,6 @@ def test_internal_standard_rir():
     # graphite area == standard area, 10 wt% standard, RIR 1 → 10 wt% graphite
     r = calibration.internal_standard_wt_pct(100.0, 100.0, 10.0, 1.0)
     assert abs(r["crystalline_graphite_wt_pct_as_spiked"] - 10.0) < 1e-6
-
-
-# --------------------------------------------------------------------------
-# simulate.py — mass balance closes; ordering vs amount diverge
-# --------------------------------------------------------------------------
-@pytest.mark.parametrize("grade", ["GPC", "CPC", "LSPC"])
-@pytest.mark.parametrize("temp,time", [(1000, 5), (1300, 5), (1600, 24)])
-def test_mass_balance_closes(grade, temp, time):
-    r = simulate.simulate(grade=grade, temp_C=temp, time_h=time)
-    assert abs(r["balance"]["closure_pct"] - 100.0) < 0.01
-
-
-def test_paper_conditions_reproduce_high_dg():
-    r = simulate.simulate(grade="GPC", fe_wt_pct=100, caco3_wt_pct=5,
-                          temp_C=1600, time_h=24)
-    assert r["state"]["DG_percent"] >= 97.0
-    assert r["state"]["crystalline_fraction"] >= 0.95
-
-
-def test_dg_saturates_while_amount_lags():
-    """The headline divergence: at low T, DG% already looks high but the
-    crystalline *amount* is well below it."""
-    lo = simulate.simulate(grade="GPC", temp_C=1000, time_h=5)
-    assert lo["state"]["DG_percent"] > 94.0           # 'looks graphitized'
-    assert lo["state"]["crystalline_fraction"] < 0.85  # ...but a lot is amorphous
-
-
-def test_kinetics_monotonic_and_saturating():
-    """Avrami–Arrhenius crystalline fraction rises with temperature and time and
-    stays within (0, alpha_max]."""
-    f1000 = simulate.crystalline_fraction(1000, 5)
-    f1200 = simulate.crystalline_fraction(1200, 5)
-    f1600 = simulate.crystalline_fraction(1600, 24)
-    assert 0.0 < f1000 < f1200 < f1600 <= simulate._KINETICS["alpha_max"] + 1e-9
-    assert simulate.crystalline_fraction(1200, 10) >= simulate.crystalline_fraction(1200, 5)
-
-
-def test_tga_areas_match_fractions():
-    tg = simulate.tga_burnoff(0.8)
-    assert abs(tg["graphitic_area"] - 0.8) < 1e-9
-    assert abs(tg["amorphous_area"] - 0.2) < 1e-9
-
-
-def test_boudouard_reduces_carbon_and_closes():
-    """More CaCO₃ → more carbon etched by CO₂ (C+CO₂→2CO) → less graphite, but
-    the mass balance still closes."""
-    lo = simulate.simulate(grade="GPC", caco3_wt_pct=0.0, temp_C=1600, time_h=24)
-    hi = simulate.simulate(grade="GPC", caco3_wt_pct=20.0, temp_C=1600, time_h=24)
-    assert hi["gas_g"]["carbon_boudouard_CO"] > lo["gas_g"]["carbon_boudouard_CO"]
-    assert hi["product_after_wash_g"]["crystalline_graphite"] < lo["product_after_wash_g"]["crystalline_graphite"]
-    for r in (lo, hi):
-        assert abs(r["balance"]["closure_pct"] - 100.0) < 0.01
 
 
 # --------------------------------------------------------------------------
