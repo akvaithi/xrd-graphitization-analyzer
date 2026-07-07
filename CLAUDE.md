@@ -49,10 +49,9 @@ to the method must land in both, verified by the parity tests.
   (mixture / internal-standard → absolute wt%), `trends.py` (intensity-vs-parameter
   EDA), `yield_calc.py` (carbon/graphite yield from weighed masses; recipe from
   filename scaled to the pellet; crystalline-graphite yield = mass yield ×
-  crystallinity; `--manifest`/`--plots`). The process **mass-balance + kinetics
-  simulation** (formerly `research/simulate.py`) and future **ReaxFF** atomistic
-  work live in the sibling private repo `coke-graphitization-sim` — this repo
-  stays scoped to XRD analysis and yield calculations over real data.
+  crystallinity; `--manifest`/`--plots`). This repo is scoped to XRD analysis and
+  yield calculations over real data; process/atomistic simulation work lives
+  elsewhere.
 - `native/Sources/XRDCore/` — Swift engine: `GraphitizationAnalyzer`, `InternalStandard`,
   `ImpurityScan`, `AISuggester` (Ollama), `LevenbergMarquardt`, `PseudoVoigt`,
   `Crystallinity` (mirrors `xrd_analyzer.crystallinity`), `YieldCalc` (mirrors
@@ -142,8 +141,8 @@ to the method must land in both, verified by the parity tests.
     Python/Swift reference.
 - `tests/test_engine.py` — pytest regression + Python↔Swift parity (DG, crystallinity,
   yield); `SWIFT_CLI` resolves to `xrd-validate.exe` on Windows. `tests/test_research.py`
-  — the `research/` module (index monotonicity, calibration recovery, mass-balance
-  closure, yield self-consistency).
+  — the `research/` module (index monotonicity, calibration recovery, yield
+  self-consistency).
 
 ## Commands
 ```bash
@@ -155,7 +154,7 @@ python3 -m pytest tests/ -q
 cd native && swift build
 .build/debug/xrd-validate <file.xy> [--peaks 1|2] [--anchor 26.54] [--calib auto]
 .build/debug/xrd-validate <file.xy> --crystallinity      # crystalline (amount) fraction
-# research/ tooling (crystallinity, calibration, simulation, yield)
+# research/ tooling (crystallinity, calibration, yield)
 python3 research/yield_calc.py --manifest runs.csv --plots out/   # yield + trends
 python3 research/trends.py "DATA/xrd scans" --csv m.csv --plots out/
 # native app bundle (lean runtime-only by default; needs a full Xcode toolchain)

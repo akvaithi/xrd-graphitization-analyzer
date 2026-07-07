@@ -64,7 +64,7 @@ the three. This module adds the third.
    absolute wt% + amorphous-by-difference, free of the mixture assumption.
    Validate the mixture curve against a few spiked samples.
 3. **Independent confirmation — TGA burn-off.** Orthogonal (mass, not
-   diffraction); also calibrates the simulation's burn sub-model.
+   diffraction).
 
 The tooling below works on existing scans **now** and activates the absolute
 calibration the moment those standards are scanned.
@@ -95,11 +95,6 @@ Manifest CSV: `file, graphite_wt_pct[, standard_wt_pct]`. The default metric
 The fit auto-selects linear vs quadratic (the metric↔wt% map is mildly curved
 because the normalizer also moves with composition). `--selftest` builds known
 synthetic blends and confirms recovery (held-out MAE < 5 wt%).
-
-> The mass-balance + kinetics process simulation (`simulate.py`) has moved to the
-> sibling [coke-graphitization-sim](https://github.com/akvaithi/coke-graphitization-sim)
-> repo (private), which is also where ReaxFF/atomistic simulation work will live.
-> This repo stays scoped to XRD analysis and yield calculations over real data.
 
 ---
 
@@ -150,11 +145,10 @@ amorphous↔turbostratic sub-split, which is why it's flagged).
 scatter equally per gram, so the index *ranks* samples reliably but is not wt%
 until calibrated against physical standards (§3).
 
-### Process-chemistry references (yield / simulation)
+### Process-chemistry references (yield)
 
 Background for the iron-catalyzed graphitization mechanism and the yield chemistry
-(CaCO₃ decomposition, Boudouard etching, sulfur trapping) modeled in `yield_calc.py`
-(and, for the process mass-balance, in the sibling `coke-graphitization-sim` repo):
+(CaCO₃ decomposition, Boudouard etching, sulfur trapping) modeled in `yield_calc.py`:
 
 - **Iron-catalyzed graphitization mechanism** — "Elucidating the Mechanism of
   Iron-Catalyzed Graphitization: The First Observation of Homogeneous Solid-State
