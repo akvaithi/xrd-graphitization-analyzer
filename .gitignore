@@ -49,3 +49,7 @@ math verification/
 
 # Swift build output
 .build/
+
+# Confidential: pending patent 63/704,517, CaCO3-additive specifics.
+# The file itself says: do not commit this to a public repo.
+SIMULATION_HANDOFF.md
